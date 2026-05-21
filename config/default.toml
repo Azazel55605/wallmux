@@ -1,0 +1,42 @@
+[general]
+wallpaper_dirs = [
+  "~/Pictures/Wallpapers",
+  "~/Videos/Wallpapers",
+]
+default_monitor = "all"
+restore_on_startup = true
+thumbnail_size = 256
+
+[backend_rules]
+image = "awww"
+gif = "awww"
+video = "mpvpaper"
+
+[backends.awww]
+command = "awww"
+transition_type = "grow"
+transition_duration = 0.8
+transition_fps = 60
+
+[backends.swww]
+command = "swww"
+transition_type = "grow"
+transition_duration = 0.8
+transition_fps = 60
+
+[backends.mpvpaper]
+command = "mpvpaper"
+options = "no-audio loop hwdec=auto"
+
+[backends.gslapper]
+command = "gslapper"
+
+[hooks]
+before_set = []
+after_set = [
+  "matugen image {source_for_colors}",
+]
+timeout_seconds = 30
+
+[colors]
+video_color_source = "thumbnail"

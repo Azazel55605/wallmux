@@ -1,0 +1,44 @@
+[project]
+name = "wallmux"
+version = "0.1.0"
+description = "Hyprland-first wallpaper manager and backend orchestrator."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "Wallmux contributors" },
+]
+dependencies = [
+  "platformdirs>=4.0",
+  "pillow>=10.0",
+  "pyside6>=6.7",
+  "tomli-w>=1.0",
+  "python-magic>=0.4.27",
+]
+
+[project.scripts]
+wallmuxctl = "wallmux.cli:main"
+wallmuxd = "wallmux.daemon:main"
+wallmux-gui = "wallmux.gui:main"
+
+[project.optional-dependencies]
+dev = [python -m ruff check .
+  "pytest>=8.0",
+  "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
