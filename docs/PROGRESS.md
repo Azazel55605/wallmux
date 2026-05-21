@@ -10,11 +10,11 @@ Status legend:
 
 ## Current Snapshot
 
-- Current phase: Phase 2 complete / ready for Phase 3
+- Current phase: Phase 3 complete / ready for Phase 4
 - Repository scaffold: done
 - CLI prototype: complete for Phase 1
 - Daemon: complete for Phase 2
-- GUI: skeleton only
+- GUI: complete for Phase 3
 - Last verified: `pytest` and `ruff check .` passing
 
 ## Phase 0: Repository Setup
@@ -82,18 +82,18 @@ Goal: stable backend ownership.
 
 Goal: usable Waypaper-like manager.
 
-- [~] Add `wallmux-gui` entry point
-- [ ] PySide6 main window structure
-- [ ] Folder picker
-- [ ] Wallpaper folder library
-- [ ] Thumbnail grid
-- [ ] Image thumbnails
-- [ ] Video thumbnails through `ffmpeg`
-- [ ] Monitor selector
-- [ ] Backend preview label
-- [ ] Set wallpaper button
-- [ ] Basic settings page
-- [ ] Reuse CLI/service logic instead of duplicating routing
+- [x] Add `wallmux-gui` entry point
+- [x] PySide6 main window structure
+- [x] Folder picker
+- [x] Wallpaper folder library
+- [x] Thumbnail grid
+- [x] Image thumbnails
+- [x] Video thumbnails through `ffmpeg`
+- [x] Monitor selector
+- [x] Backend preview label
+- [x] Set wallpaper button
+- [x] Basic settings page
+- [x] Reuse CLI/service logic instead of duplicating routing
 
 ## Phase 4: Hooks and Color Integration
 
@@ -172,3 +172,4 @@ Record notable checks here as the project moves.
 - 2026-05-21: Finished Phase 2 daemon with Unix socket JSON IPC, startup restore, stale PID cleanup, daemon-backed CLI commands, state reporting, and per-monitor video stopping.
 - 2026-05-21: `pytest` passed, 25 tests.
 - 2026-05-21: `ruff check .` passed.
+- 2026-05-21: Finished Phase 3 GUI v1 with PySide6 browser, folder picker, thumbnail grid, filters, monitor selector, backend preview, settings folder management, and set-wallpaper action.

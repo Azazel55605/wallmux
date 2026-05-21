@@ -41,6 +41,20 @@ By default, `wallmuxctl set` and `wallmuxctl restore` try to talk to `wallmuxd` 
 wallmuxctl --direct set ~/Wallpapers/foo.png --monitor DP-1
 ```
 
+## GUI
+
+```bash
+wallmux-gui
+```
+
+The GUI opens a wallpaper browser with folder selection, search, media-type filtering, thumbnails, monitor selection, backend preview, and a settings tab for wallpaper folders.
+
+For Qt theme diagnostics:
+
+```bash
+wallmux-gui --theme-debug
+```
+
 ## Config
 
 Wallmux stores user config at:
