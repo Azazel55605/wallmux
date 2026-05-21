@@ -125,6 +125,15 @@ Goal: improve cross-backend switching after the MVP is reliable.
 
 Goal: easy install on Arch.
 
+- [x] Add Python wheel build configuration
+- [x] Add source distribution build configuration
+- [x] Package default config inside the Python package
+- [x] Add packaging documentation
+- [x] Add Makefile build helper
+- [x] Add Makefile local install helper
+- [x] Add Makefile local uninstall helper
+- [x] Add Makefile pipx install helper
+- [x] Add Makefile pipx uninstall helper
 - [ ] Add `PKGBUILD`
 - [ ] Add systemd user service
 - [ ] Add desktop file
@@ -153,3 +162,9 @@ Record notable checks here as the project moves.
 - 2026-05-21: Finished Phase 1 CLI prototype with backend execution, restore execution, `--all` and focused monitor expansion, and tracked video PID replacement.
 - 2026-05-21: `pytest` passed, 15 tests.
 - 2026-05-21: `ruff check .` passed.
+- 2026-05-21: Added Python wheel/sdist packaging, packaged default config resource, Makefile build helper, and packaging docs.
+- 2026-05-21: `python -m build` produced `wallmux-0.1.0.tar.gz` and `wallmux-0.1.0-py3-none-any.whl`.
+- 2026-05-21: Added `make install` and `make uninstall` for local wheel testing.
+- 2026-05-21: `make build` passed and produced wheel/sdist artifacts.
+- 2026-05-21: `twine check dist/*` passed for wheel and sdist.
+- 2026-05-21: Added `make pipx-install` and `make pipx-uninstall` for isolated install testing.

@@ -42,3 +42,25 @@ pip install -e ".[dev]"
 pytest
 ruff check .
 ```
+
+## Build
+
+```bash
+python -m build
+```
+
+See `docs/PACKAGING.md` for packaging notes.
+
+For quick local wheel testing with an isolated Python environment:
+
+```bash
+make pipx-install
+make pipx-uninstall
+```
+
+For active-environment pip testing:
+
+```bash
+make install
+make uninstall
+```
