@@ -22,7 +22,7 @@ wallmuxd = "wallmux.daemon:main"
 wallmux-gui = "wallmux.gui:main"
 
 [project.optional-dependencies]
-dev = [python -m ruff check .
+dev = [
   "pytest>=8.0",
   "ruff>=0.6",
 ]
