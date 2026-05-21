@@ -22,10 +22,12 @@ Or use the Makefile:
 make build
 ```
 
-If you have already installed the development dependencies and want to avoid build isolation:
+The Makefile uses `python -m build --no-isolation` by default, which is convenient for local/offline testing after installing development dependencies.
+
+For a fully isolated build, run:
 
 ```bash
-python -m build --no-isolation
+python -m build
 ```
 
 Build artifacts are written to `dist/`:
@@ -105,3 +107,15 @@ This installs the console entry points:
 ## Notes
 
 The default config is packaged inside `wallmux.data` so installed builds can load defaults without relying on the repository checkout. The root `config/default.toml` remains as a readable project reference.
+
+On first run, Wallmux creates the user config at:
+
+```text
+~/.config/wallmux/config.toml
+```
+
+When the packaged default config changes in future releases, Wallmux reconciles the user config automatically:
+
+- User-changed values are kept when the key still exists.
+- New default keys are added.
+- Keys removed from the packaged default are removed from the user config.

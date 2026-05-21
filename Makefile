@@ -2,6 +2,7 @@ PYTHON ?= python
 PIP ?= $(PYTHON) -m pip
 PIPX ?= pipx
 PACKAGE_NAME ?= wallmux
+BUILD_FLAGS ?= --no-isolation
 
 .PHONY: build check clean install lint pipx-install pipx-uninstall test uninstall
 
@@ -14,7 +15,7 @@ test:
 	pytest
 
 build: clean check
-	$(PYTHON) -m build
+	$(PYTHON) -m build $(BUILD_FLAGS)
 
 install: build
 	$(PIP) install --force-reinstall --no-deps dist/$(PACKAGE_NAME)-*.whl

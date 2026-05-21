@@ -168,3 +168,4 @@ Record notable checks here as the project moves.
 - 2026-05-21: `make build` passed and produced wheel/sdist artifacts.
 - 2026-05-21: `twine check dist/*` passed for wheel and sdist.
 - 2026-05-21: Added `make pipx-install` and `make pipx-uninstall` for isolated install testing.
+- 2026-05-21: Added self-creating and self-reconciling user config behavior.

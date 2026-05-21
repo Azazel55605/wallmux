@@ -33,6 +33,16 @@ wallmuxd
 wallmux-gui
 ```
 
+## Config
+
+Wallmux stores user config at:
+
+```text
+~/.config/wallmux/config.toml
+```
+
+If the file does not exist, Wallmux creates it from the packaged defaults. Future default config changes are merged automatically: changed user values are kept, new defaults are added, and removed defaults are pruned.
+
 ## Development
 
 ```bash
