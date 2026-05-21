@@ -93,6 +93,23 @@ Supported placeholders:
 
 For images, `{source_for_colors}` is the wallpaper file. For videos, it is the generated thumbnail when available. Hook failures are logged to `~/.local/state/wallmux/hooks.log` and do not roll back wallpaper changes.
 
+## Transitions
+
+Wallmux keeps switching simple and state-aware:
+
+- image -> image: use the native image backend transition
+- image -> video: start the video backend and update monitor ownership
+- video -> image: stop the tracked video process before setting the image
+- video -> video: stop the tracked old video process before starting the new one
+
+Video cleanup is controlled by:
+
+```toml
+[transitions]
+video_stop_timeout_seconds = 2.0
+kill_video_on_timeout = true
+```
+
 ## Development
 
 ```bash

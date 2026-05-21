@@ -17,7 +17,12 @@ def pid_is_alive(pid: int) -> bool:
     return True
 
 
-def terminate_pid(pid: int, timeout_seconds: float = 2.0) -> bool:
+def terminate_pid(
+    pid: int,
+    timeout_seconds: float = 2.0,
+    *,
+    kill_on_timeout: bool = True,
+) -> bool:
     if not pid_is_alive(pid):
         return False
 
@@ -27,6 +32,23 @@ def terminate_pid(pid: int, timeout_seconds: float = 2.0) -> bool:
         return False
 
     deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if not pid_is_alive(pid):
+            return True
+        time.sleep(0.05)
+
+    if not pid_is_alive(pid):
+        return True
+
+    if not kill_on_timeout:
+        return False
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return False
+
+    deadline = time.monotonic() + 0.5
     while time.monotonic() < deadline:
         if not pid_is_alive(pid):
             return True

@@ -42,5 +42,9 @@ swww = true
 mpvpaper = true
 gslapper = true
 
+[transitions]
+video_stop_timeout_seconds = 2.0
+kill_video_on_timeout = true
+
 [colors]
 video_color_source = "thumbnail"

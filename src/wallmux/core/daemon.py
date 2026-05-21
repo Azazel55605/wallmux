@@ -181,4 +181,5 @@ def _serialize_result(result: SetResult) -> dict[str, Any]:
         "wallpaper_type": result.wallpaper_type.value,
         "command": result.command,
         "pid": result.pid,
+        "transition": result.transition.value,
     }

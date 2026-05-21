@@ -14,6 +14,7 @@ from wallmux.core.mime import WallpaperType, detect_wallpaper_type
 from wallmux.core.monitors import Monitor, get_focused_monitor, list_monitors
 from wallmux.core.process import pid_is_alive, terminate_pid
 from wallmux.core.state import WallpaperEntry, load_state, save_state
+from wallmux.core.transitions import TransitionKind, plan_transition
 
 
 class WallmuxError(RuntimeError):
@@ -51,6 +52,7 @@ class SetResult:
     wallpaper_type: WallpaperType
     command: list[str]
     pid: int | None = None
+    transition: TransitionKind = TransitionKind.FIRST_SET
 
 
 def set_wallpaper(
@@ -79,8 +81,18 @@ def set_wallpaper(
 
     state = load_state(state_path)
     previous = state.monitors.get(monitor)
-    if previous and previous.pid and previous.backend in {"mpvpaper", "gslapper"}:
-        terminate_pid(previous.pid)
+    transition = plan_transition(previous, wallpaper_type)
+    if previous and previous.pid and not pid_is_alive(previous.pid):
+        previous.pid = None
+
+    if previous and previous.pid and transition.stop_previous_video:
+        transitions_config = config.get("transitions", {})
+        terminate_pid(
+            previous.pid,
+            float(transitions_config.get("video_stop_timeout_seconds", 2.0)),
+            kill_on_timeout=bool(transitions_config.get("kill_video_on_timeout", True)),
+        )
+        previous.pid = None
 
     pid = _execute(command, wallpaper_type, runner)
     state.monitors[monitor] = WallpaperEntry(
@@ -99,6 +111,7 @@ def set_wallpaper(
         wallpaper_type=wallpaper_type,
         command=command,
         pid=pid,
+        transition=transition.kind,
     )
 
 

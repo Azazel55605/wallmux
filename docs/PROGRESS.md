@@ -113,10 +113,10 @@ Goal: fit into Hyprland rice/theme workflows.
 
 Goal: improve cross-backend switching after the MVP is reliable.
 
-- [ ] Keep native `awww` transitions for image -> image
-- [ ] Clean video -> video replacement
-- [ ] Clean image -> video switching
-- [ ] Clean video -> image switching
+- [x] Keep native `awww` transitions for image -> image
+- [x] Clean video -> video replacement
+- [x] Clean image -> video switching
+- [x] Clean video -> image switching
 - [ ] Optional fade overlay
 - [ ] Optional screenshot bridge
 - [ ] Optional QuickShell overlay integration
@@ -175,3 +175,4 @@ Record notable checks here as the project moves.
 - 2026-05-21: Finished Phase 3 GUI v1 with PySide6 browser, folder picker, thumbnail grid, filters, monitor selector, backend preview, settings folder management, and set-wallpaper action.
 - 2026-05-21: Added GUI background thumbnail generation, Qt theme/plugin discovery, zen mode, keyboard navigation, and a dialog-style floating hint.
 - 2026-05-21: Finished Phase 4 hooks with before/after stages, placeholders, timeouts, failure logging, video thumbnail color source, per-backend hook enable flags, and GUI hook log viewer.
+- 2026-05-21: Finished Phase 5 simple transition polish with transition classification, stale PID cleanup, configurable video stop timeout, SIGKILL fallback, and tests for image/video switch paths.

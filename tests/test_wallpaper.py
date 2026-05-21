@@ -5,6 +5,7 @@ from pathlib import Path
 from wallmux.core.config import load_config
 from wallmux.core.monitors import Monitor
 from wallmux.core.state import load_state
+from wallmux.core.transitions import TransitionKind
 from wallmux.core.wallpaper import (
     CommandRunner,
     restore_wallpapers,
@@ -155,16 +156,82 @@ def test_replaces_tracked_video_process(tmp_path: Path, monkeypatch) -> None:
     second_video.write_bytes(b"")
     terminated: list[int] = []
 
-    monkeypatch.setattr("wallmux.core.wallpaper.terminate_pid", terminated.append)
+    def terminate(pid: int, timeout_seconds: float, *, kill_on_timeout: bool) -> bool:
+        terminated.append(pid)
+        assert timeout_seconds == 2.0
+        assert kill_on_timeout is True
+        return True
+
+    monkeypatch.setattr("wallmux.core.wallpaper.pid_is_alive", lambda pid: True)
+    monkeypatch.setattr("wallmux.core.wallpaper.terminate_pid", terminate)
 
     config = sample_config(tmp_path)
-    set_wallpaper(first_video, "DP-1", config=config, runner=runner, state_path=state_path)
-    set_wallpaper(second_video, "DP-1", config=config, runner=runner, state_path=state_path)
+    first = set_wallpaper(first_video, "DP-1", config=config, runner=runner, state_path=state_path)
+    second = set_wallpaper(
+        second_video,
+        "DP-1",
+        config=config,
+        runner=runner,
+        state_path=state_path,
+    )
 
+    assert first.transition is TransitionKind.FIRST_SET
+    assert second.transition is TransitionKind.VIDEO_TO_VIDEO
     assert terminated == [4201]
     state = load_state(state_path)
     assert state.monitors["DP-1"].file == str(second_video)
     assert state.monitors["DP-1"].pid == 4202
+
+
+def test_video_to_image_stops_tracked_video_before_image(tmp_path: Path, monkeypatch) -> None:
+    runner = FakeRunner()
+    state_path = tmp_path / "state.json"
+    video = tmp_path / "one.mp4"
+    image = tmp_path / "two.png"
+    video.write_bytes(b"")
+    image.write_bytes(b"")
+    terminated: list[int] = []
+
+    def terminate(pid: int, timeout_seconds: float, *, kill_on_timeout: bool) -> bool:
+        terminated.append(pid)
+        return True
+
+    monkeypatch.setattr("wallmux.core.wallpaper.pid_is_alive", lambda pid: True)
+    monkeypatch.setattr("wallmux.core.wallpaper.terminate_pid", terminate)
+
+    config = sample_config(tmp_path)
+    set_wallpaper(video, "DP-1", config=config, runner=runner, state_path=state_path)
+    result = set_wallpaper(image, "DP-1", config=config, runner=runner, state_path=state_path)
+
+    assert result.transition is TransitionKind.VIDEO_TO_IMAGE
+    assert terminated == [4201]
+    assert runner.runs
+    assert load_state(state_path).monitors["DP-1"].pid is None
+
+
+def test_image_to_image_keeps_native_backend_transition(tmp_path: Path, monkeypatch) -> None:
+    runner = FakeRunner()
+    state_path = tmp_path / "state.json"
+    first_image = tmp_path / "one.png"
+    second_image = tmp_path / "two.png"
+    first_image.write_bytes(b"")
+    second_image.write_bytes(b"")
+    terminated: list[int] = []
+    monkeypatch.setattr("wallmux.core.wallpaper.terminate_pid", terminated.append)
+
+    config = sample_config(tmp_path)
+    set_wallpaper(first_image, "DP-1", config=config, runner=runner, state_path=state_path)
+    result = set_wallpaper(
+        second_image,
+        "DP-1",
+        config=config,
+        runner=runner,
+        state_path=state_path,
+    )
+
+    assert result.transition is TransitionKind.IMAGE_TO_IMAGE
+    assert terminated == []
+    assert runner.runs[-1][0:2] == ["awww", "img"]
 
 
 def test_runs_hooks_around_backend_execution(tmp_path: Path, monkeypatch) -> None:
