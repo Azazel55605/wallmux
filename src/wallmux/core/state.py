@@ -58,12 +58,14 @@ def save_wallpaper_state(
     file: Path,
     backend: str,
     wallpaper_type: str,
+    pid: int | None = None,
     path: Path | None = None,
 ) -> None:
     state = load_state(path)
     state.monitors[monitor] = WallpaperEntry(
-        file=str(file.expanduser()),
+        file=str(file.expanduser().resolve()),
         backend=backend,
         wallpaper_type=wallpaper_type,
+        pid=pid,
     )
     save_state(state, path)

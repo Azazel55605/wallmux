@@ -8,7 +8,13 @@ from pathlib import Path
 from wallmux.backends.routing import route_wallpaper
 from wallmux.core.mime import detect_wallpaper_type
 from wallmux.core.monitors import list_monitors
-from wallmux.core.state import load_state, save_wallpaper_state
+from wallmux.core.wallpaper import (
+    WallmuxError,
+    restore_wallpapers,
+    set_wallpaper,
+    set_wallpaper_for_all,
+    set_wallpaper_for_focused,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,8 +32,9 @@ def build_parser() -> argparse.ArgumentParser:
     target = set_cmd.add_mutually_exclusive_group(required=True)
     target.add_argument("--monitor")
     target.add_argument("--all", action="store_true")
+    target.add_argument("--focused-monitor", action="store_true")
 
-    restore = subparsers.add_parser("restore", help="Print saved wallpaper state for now.")
+    restore = subparsers.add_parser("restore", help="Restore saved wallpaper state.")
     restore.set_defaults(command="restore")
 
     return parser
@@ -49,20 +56,35 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "set":
-        wallpaper_type = detect_wallpaper_type(args.file)
-        backend = route_wallpaper(wallpaper_type)
-        monitor = "all" if args.all else args.monitor
-        save_wallpaper_state(monitor, args.file, backend, wallpaper_type.value)
-        print(f"saved {args.file} for {monitor} via {backend}")
+        try:
+            if args.all:
+                results = set_wallpaper_for_all(args.file)
+            elif args.focused_monitor:
+                results = [set_wallpaper_for_focused(args.file)]
+            else:
+                results = [set_wallpaper(args.file, args.monitor)]
+        except (ValueError, WallmuxError) as error:
+            print(f"wallmuxctl: {error}")
+            return 1
+
+        for result in results:
+            pid = f" pid={result.pid}" if result.pid else ""
+            print(f"set {result.file} for {result.monitor} via {result.backend}{pid}")
         return 0
 
     if args.command == "restore":
-        state = load_state()
-        if not state.monitors:
+        try:
+            results = restore_wallpapers()
+        except (ValueError, WallmuxError) as error:
+            print(f"wallmuxctl: {error}")
+            return 1
+
+        if not results:
             print("no saved wallpapers")
             return 0
-        for monitor, entry in state.monitors.items():
-            print(f"{monitor}: {entry.file} via {entry.backend}")
+        for result in results:
+            pid = f" pid={result.pid}" if result.pid else ""
+            print(f"restored {result.file} for {result.monitor} via {result.backend}{pid}")
         return 0
 
     return 1
