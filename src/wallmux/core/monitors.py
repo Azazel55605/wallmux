@@ -33,3 +33,10 @@ def list_monitors() -> list[Monitor]:
         )
         for monitor in monitors
     ]
+
+
+def get_focused_monitor(monitors: list[Monitor] | None = None) -> Monitor | None:
+    for monitor in monitors if monitors is not None else list_monitors():
+        if monitor.focused:
+            return monitor
+    return None

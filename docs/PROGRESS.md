@@ -10,9 +10,9 @@ Status legend:
 
 ## Current Snapshot
 
-- Current phase: Phase 0 / early Phase 1
+- Current phase: Phase 1 complete / ready for Phase 2
 - Repository scaffold: done
-- CLI prototype: started
+- CLI prototype: complete for Phase 1
 - Daemon: skeleton only
 - GUI: skeleton only
 - Last verified: `pytest` and `ruff check .` passing
@@ -38,11 +38,11 @@ Goal: make the project easy to work on with Codex and normal local tooling.
 
 Goal: set wallpapers without the GUI.
 
-- [~] `wallmuxctl detect FILE`
-- [~] `wallmuxctl monitors`
-- [~] `wallmuxctl set FILE --monitor MONITOR`
-- [~] `wallmuxctl set FILE --all`
-- [~] `wallmuxctl restore`
+- [x] `wallmuxctl detect FILE`
+- [x] `wallmuxctl monitors`
+- [x] `wallmuxctl set FILE --monitor MONITOR`
+- [x] `wallmuxctl set FILE --all`
+- [x] `wallmuxctl restore`
 - [x] Add MIME routing module
 - [x] Add extension fallback detection
 - [x] Route images to `awww`
@@ -50,19 +50,19 @@ Goal: set wallpapers without the GUI.
 - [x] Route videos to `mpvpaper`
 - [x] Add `hyprctl monitors -j` wrapper
 - [x] Add JSON state save/load helper
-- [ ] Execute image backend commands
-- [ ] Execute video backend commands
-- [ ] Restore wallpapers by executing saved state
-- [ ] Track and replace per-monitor video processes
-- [ ] Add focused monitor support
+- [x] Execute image backend commands
+- [x] Execute video backend commands
+- [x] Restore wallpapers by executing saved state
+- [x] Track and replace per-monitor video processes
+- [x] Add focused monitor support
 
 Acceptance criteria:
 
-- [ ] PNG/JPG/WEBP files go to `awww`
-- [ ] MP4/WEBM/MKV files go to `mpvpaper`
-- [ ] Monitor list comes from `hyprctl`
-- [ ] State is saved
-- [ ] Restore works after restart
+- [x] PNG/JPG/WEBP files go to `awww`
+- [x] MP4/WEBM/MKV files go to `mpvpaper`
+- [x] Monitor list comes from `hyprctl`
+- [x] State is saved
+- [x] Restore works after restart
 
 ## Phase 2: Daemon
 
@@ -137,9 +137,9 @@ Goal: easy install on Arch.
 - [x] Detect image, GIF, and video files
 - [x] Route images/GIFs to `awww`
 - [x] Route videos to `mpvpaper`
-- [~] Allow choosing a monitor
-- [~] Save current wallpaper state
-- [ ] Restore current wallpaper state by executing backend commands
+- [x] Allow choosing a monitor
+- [x] Save current wallpaper state
+- [x] Restore current wallpaper state by executing backend commands
 - [ ] Provide a basic PySide6 thumbnail grid
 - [ ] Run optional `after_set` hooks
 
@@ -149,4 +149,7 @@ Record notable checks here as the project moves.
 
 - 2026-05-21: Fixed malformed `pyproject.toml` dev dependency list.
 - 2026-05-21: `pytest` passed, 9 tests.
+- 2026-05-21: `ruff check .` passed.
+- 2026-05-21: Finished Phase 1 CLI prototype with backend execution, restore execution, `--all` and focused monitor expansion, and tracked video PID replacement.
+- 2026-05-21: `pytest` passed, 15 tests.
 - 2026-05-21: `ruff check .` passed.
