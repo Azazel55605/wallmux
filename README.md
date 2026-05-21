@@ -29,8 +29,16 @@ wallmuxctl detect ~/Wallpapers/foo.png
 wallmuxctl monitors
 wallmuxctl set ~/Wallpapers/foo.png --monitor DP-1
 wallmuxctl restore
+wallmuxctl state
+wallmuxctl stop-video --monitor DP-1
 wallmuxd
 wallmux-gui
+```
+
+By default, `wallmuxctl set` and `wallmuxctl restore` try to talk to `wallmuxd` first. If the daemon is not running, they fall back to direct execution. Use `--direct` to skip the daemon explicitly:
+
+```bash
+wallmuxctl --direct set ~/Wallpapers/foo.png --monitor DP-1
 ```
 
 ## Config

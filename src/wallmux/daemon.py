@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from wallmux.core.daemon import WallmuxDaemon
+
 
 def main() -> int:
-    print("wallmuxd: daemon skeleton is ready; IPC lands in Phase 2")
+    WallmuxDaemon().start()
     return 0
 
 

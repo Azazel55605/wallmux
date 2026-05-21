@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from wallmux.backends.routing import route_wallpaper
+from wallmux.core.ipc import DaemonUnavailable, send_request
 from wallmux.core.mime import detect_wallpaper_type
 from wallmux.core.monitors import list_monitors
 from wallmux.core.wallpaper import (
@@ -19,6 +20,11 @@ from wallmux.core.wallpaper import (
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="wallmuxctl")
+    parser.add_argument(
+        "--direct",
+        action="store_true",
+        help="Run commands directly instead of asking wallmuxd.",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     detect = subparsers.add_parser("detect", help="Detect wallpaper type and route.")
@@ -36,6 +42,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     restore = subparsers.add_parser("restore", help="Restore saved wallpaper state.")
     restore.set_defaults(command="restore")
+
+    stop_video = subparsers.add_parser("stop-video", help="Stop tracked video wallpaper process.")
+    stop_video.add_argument("--monitor", required=True)
+
+    state = subparsers.add_parser("state", help="Print daemon state.")
+    state.set_defaults(command="state")
 
     return parser
 
@@ -56,6 +68,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "set":
+        if not args.direct:
+            request = {"command": "set", "file": str(args.file)}
+            if args.all:
+                request["all"] = True
+            elif args.focused_monitor:
+                request["focused_monitor"] = True
+            else:
+                request["monitor"] = args.monitor
+
+            if _send_daemon_command(request, "set"):
+                return 0
+
         try:
             if args.all:
                 results = set_wallpaper_for_all(args.file)
@@ -73,6 +97,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "restore":
+        if not args.direct and _send_daemon_command({"command": "restore"}, "restored"):
+            return 0
+
         try:
             results = restore_wallpapers()
         except (ValueError, WallmuxError) as error:
@@ -87,7 +114,60 @@ def main(argv: list[str] | None = None) -> int:
             print(f"restored {result.file} for {result.monitor} via {result.backend}{pid}")
         return 0
 
+    if args.command == "stop-video":
+        try:
+            response = send_request({"command": "stop-video", "monitor": args.monitor})
+        except DaemonUnavailable as error:
+            print(f"wallmuxctl: {error}")
+            return 1
+        if not response.get("ok"):
+            print(f"wallmuxctl: {response.get('error', 'unknown daemon error')}")
+            return 1
+        stopped = "stopped" if response.get("stopped") else "no tracked video process"
+        print(f"{args.monitor}: {stopped}")
+        return 0
+
+    if args.command == "state":
+        try:
+            response = send_request({"command": "state"})
+        except DaemonUnavailable as error:
+            print(f"wallmuxctl: {error}")
+            return 1
+        if not response.get("ok"):
+            print(f"wallmuxctl: {response.get('error', 'unknown daemon error')}")
+            return 1
+        monitors = response.get("state", {}).get("monitors", {})
+        if not monitors:
+            print("no saved wallpapers")
+            return 0
+        for monitor, entry in monitors.items():
+            pid = f" pid={entry['pid']}" if entry.get("pid") else ""
+            print(f"{monitor}: {entry['file']} via {entry['backend']}{pid}")
+        return 0
+
     return 1
+
+
+def _send_daemon_command(request: dict, verb: str) -> bool:
+    try:
+        response = send_request(request)
+    except DaemonUnavailable as error:
+        print(f"wallmuxctl: {error}; running directly")
+        return False
+
+    if not response.get("ok"):
+        print(f"wallmuxctl: {response.get('error', 'unknown daemon error')}")
+        raise SystemExit(1)
+
+    results = response.get("results", [])
+    if not results:
+        print("no saved wallpapers")
+        return True
+
+    for result in results:
+        pid = f" pid={result['pid']}" if result.get("pid") else ""
+        print(f"{verb} {result['file']} for {result['monitor']} via {result['backend']}{pid}")
+    return True
 
 
 if __name__ == "__main__":

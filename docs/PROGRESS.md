@@ -10,10 +10,10 @@ Status legend:
 
 ## Current Snapshot
 
-- Current phase: Phase 1 complete / ready for Phase 2
+- Current phase: Phase 2 complete / ready for Phase 3
 - Repository scaffold: done
 - CLI prototype: complete for Phase 1
-- Daemon: skeleton only
+- Daemon: complete for Phase 2
 - GUI: skeleton only
 - Last verified: `pytest` and `ruff check .` passing
 
@@ -68,15 +68,15 @@ Acceptance criteria:
 
 Goal: stable backend ownership.
 
-- [~] Add `wallmuxd` entry point
-- [ ] Read config on startup
-- [ ] Restore wallpapers on startup
-- [ ] Maintain video backend processes
-- [ ] Detect stale PIDs on startup
-- [ ] Expose Unix socket IPC
-- [ ] Accept JSON control messages
-- [ ] Stop/restart per-monitor video wallpapers
-- [ ] Add daemon tests around command handling
+- [x] Add `wallmuxd` entry point
+- [x] Read config on startup
+- [x] Restore wallpapers on startup
+- [x] Maintain video backend processes
+- [x] Detect stale PIDs on startup
+- [x] Expose Unix socket IPC
+- [x] Accept JSON control messages
+- [x] Stop/restart per-monitor video wallpapers
+- [x] Add daemon tests around command handling
 
 ## Phase 3: GUI V1
 
@@ -169,3 +169,6 @@ Record notable checks here as the project moves.
 - 2026-05-21: `twine check dist/*` passed for wheel and sdist.
 - 2026-05-21: Added `make pipx-install` and `make pipx-uninstall` for isolated install testing.
 - 2026-05-21: Added self-creating and self-reconciling user config behavior.
+- 2026-05-21: Finished Phase 2 daemon with Unix socket JSON IPC, startup restore, stale PID cleanup, daemon-backed CLI commands, state reporting, and per-monitor video stopping.
+- 2026-05-21: `pytest` passed, 25 tests.
+- 2026-05-21: `ruff check .` passed.
