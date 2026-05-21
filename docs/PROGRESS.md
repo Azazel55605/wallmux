@@ -173,3 +173,4 @@ Record notable checks here as the project moves.
 - 2026-05-21: `pytest` passed, 25 tests.
 - 2026-05-21: `ruff check .` passed.
 - 2026-05-21: Finished Phase 3 GUI v1 with PySide6 browser, folder picker, thumbnail grid, filters, monitor selector, backend preview, settings folder management, and set-wallpaper action.
+- 2026-05-21: Added GUI background thumbnail generation, Qt theme/plugin discovery, zen mode, keyboard navigation, and a dialog-style floating hint.

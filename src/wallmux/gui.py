@@ -16,9 +16,10 @@ from wallmux.core.wallpaper import WallmuxError, set_wallpaper
 
 try:
     from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal, Slot
-    from PySide6.QtGui import QAction, QIcon, QPixmap
+    from PySide6.QtGui import QAction, QIcon, QKeySequence, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
+        QCheckBox,
         QComboBox,
         QFileDialog,
         QFormLayout,
@@ -100,10 +101,12 @@ class WallmuxWindow(QMainWindow):
         self.current_folder: Path | None = None
         self.selected_item: WallpaperItem | None = None
         self.pending_thumbnails: set[str] = set()
+        self.zen_mode = False
         self.thumbnail_size = int(self.config.get("general", {}).get("thumbnail_size", 256))
         self.thread_pool = QThreadPool.globalInstance()
         self.thread_pool.setMaxThreadCount(min(4, max(2, self.thread_pool.maxThreadCount())))
 
+        self.setWindowFlag(Qt.WindowType.Dialog, True)
         self.setWindowTitle("Wallmux")
         self.resize(1100, 700)
 
@@ -114,6 +117,7 @@ class WallmuxWindow(QMainWindow):
 
         self._build_browser_tab()
         self._build_settings_tab()
+        self._build_shortcuts()
         self._load_monitors()
         self.preview.setText("Choose a folder")
         QTimer.singleShot(0, self._load_initial_folder)
@@ -122,8 +126,8 @@ class WallmuxWindow(QMainWindow):
         tab = QWidget()
         outer = QVBoxLayout(tab)
 
-        toolbar = QToolBar()
-        toolbar.setIconSize(QSize(18, 18))
+        self.toolbar = QToolBar()
+        self.toolbar.setIconSize(QSize(18, 18))
         open_action = QAction(
             self._theme_icon("folder-open", QStyle.SP_DirOpenIcon),
             "Open Folder",
@@ -136,8 +140,8 @@ class WallmuxWindow(QMainWindow):
             self,
         )
         refresh_action.triggered.connect(self.refresh_library)
-        toolbar.addAction(open_action)
-        toolbar.addAction(refresh_action)
+        self.toolbar.addAction(open_action)
+        self.toolbar.addAction(refresh_action)
 
         self.search_box = QLineEdit()
         self.search_box.setMinimumWidth(240)
@@ -148,24 +152,26 @@ class WallmuxWindow(QMainWindow):
         self.filter_box.addItems(TYPE_FILTERS.keys())
         self.filter_box.currentTextChanged.connect(self.populate_grid)
 
-        toolbar.addWidget(self.search_box)
-        toolbar.addWidget(self.filter_box)
-        outer.addWidget(toolbar)
+        self.toolbar.addWidget(self.search_box)
+        self.toolbar.addWidget(self.filter_box)
+        outer.addWidget(self.toolbar)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.grid = QListWidget()
+        self.grid.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.grid.setViewMode(QListWidget.ViewMode.IconMode)
         self.grid.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.grid.setMovement(QListWidget.Movement.Static)
         self.grid.setIconSize(QSize(160, 120))
         self.grid.setGridSize(QSize(190, 170))
         self.grid.itemSelectionChanged.connect(self.select_current_item)
-        splitter.addWidget(self.grid)
+        self.grid.itemActivated.connect(self.set_selected_wallpaper)
+        self.splitter.addWidget(self.grid)
 
-        panel = QFrame()
-        panel.setMinimumWidth(280)
-        panel.setMaximumWidth(360)
-        panel_layout = QVBoxLayout(panel)
+        self.side_panel = QFrame()
+        self.side_panel.setMinimumWidth(280)
+        self.side_panel.setMaximumWidth(360)
+        panel_layout = QVBoxLayout(self.side_panel)
 
         self.preview = QLabel()
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -190,11 +196,27 @@ class WallmuxWindow(QMainWindow):
         panel_layout.addWidget(self.set_button)
         panel_layout.addStretch(1)
 
-        splitter.addWidget(panel)
-        splitter.setStretchFactor(0, 1)
-        outer.addWidget(splitter, 1)
+        self.splitter.addWidget(self.side_panel)
+        self.splitter.setStretchFactor(0, 1)
+        outer.addWidget(self.splitter, 1)
 
         self.tabs.addTab(tab, "Browser")
+
+    def _build_shortcuts(self) -> None:
+        zen_action = QAction("Toggle Zen Mode", self)
+        zen_action.setShortcuts([QKeySequence("F11"), QKeySequence("Ctrl+Z")])
+        zen_action.triggered.connect(self.toggle_zen_mode)
+        self.addAction(zen_action)
+
+        exit_zen_action = QAction("Exit Zen Mode", self)
+        exit_zen_action.setShortcut(QKeySequence("Escape"))
+        exit_zen_action.triggered.connect(self.exit_zen_mode)
+        self.addAction(exit_zen_action)
+
+        set_action = QAction("Set Selected Wallpaper", self)
+        set_action.setShortcuts([QKeySequence("Return"), QKeySequence("Enter")])
+        set_action.triggered.connect(self.set_selected_wallpaper)
+        self.addAction(set_action)
 
     def _build_settings_tab(self) -> None:
         tab = QWidget()
@@ -204,6 +226,11 @@ class WallmuxWindow(QMainWindow):
         self.config_path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(QLabel("Config"))
         layout.addWidget(self.config_path_label)
+
+        self.zen_mode_check = QCheckBox("Zen mode")
+        self.zen_mode_check.setToolTip("Show only the wallpaper grid.")
+        self.zen_mode_check.toggled.connect(self.set_zen_mode)
+        layout.addWidget(self.zen_mode_check)
 
         self.folder_list = QListWidget()
         layout.addWidget(QLabel("Wallpaper Folders"))
@@ -254,6 +281,7 @@ class WallmuxWindow(QMainWindow):
         )
         self.populate_grid()
         self.status.showMessage(f"{len(self.items)} wallpapers in {folder}", 5000)
+        self.grid.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def refresh_library(self) -> None:
         if self.current_folder is not None:
@@ -276,6 +304,9 @@ class WallmuxWindow(QMainWindow):
         if self.grid.count() == 0:
             self.preview.setText("No wallpapers")
             self.set_button.setEnabled(False)
+        elif self.grid.currentRow() < 0:
+            self.grid.setCurrentRow(0)
+        self.grid.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def select_current_item(self) -> None:
         selected = self.grid.selectedItems()
@@ -354,6 +385,26 @@ class WallmuxWindow(QMainWindow):
         self.folder_list.clear()
         for folder in self.config.get("general", {}).get("wallpaper_dirs", []):
             self.folder_list.addItem(folder)
+
+    def toggle_zen_mode(self) -> None:
+        self.set_zen_mode(not self.zen_mode)
+
+    def exit_zen_mode(self) -> None:
+        if self.zen_mode:
+            self.set_zen_mode(False)
+
+    def set_zen_mode(self, enabled: bool) -> None:
+        self.zen_mode = enabled
+        self.zen_mode_check.blockSignals(True)
+        self.zen_mode_check.setChecked(enabled)
+        self.zen_mode_check.blockSignals(False)
+        self.tabs.setCurrentIndex(0)
+        self.tabs.tabBar().setVisible(not enabled)
+        self.toolbar.setVisible(not enabled)
+        self.side_panel.setVisible(not enabled)
+        self.status.setVisible(not enabled)
+        self.grid.setSpacing(8 if enabled else 0)
+        self.grid.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     def queue_thumbnail(self, item: WallpaperItem) -> None:
         key = str(item.path)

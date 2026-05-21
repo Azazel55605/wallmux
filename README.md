@@ -49,6 +49,15 @@ wallmux-gui
 
 The GUI opens a wallpaper browser with folder selection, search, media-type filtering, thumbnails, monitor selection, backend preview, and a settings tab for wallpaper folders.
 
+GUI keyboard controls:
+
+- `Arrow keys`: move through wallpapers
+- `Enter` / `Return`: set the selected wallpaper
+- `F11` / `Ctrl+Z`: toggle zen mode
+- `Escape`: exit zen mode
+
+The GUI requests a dialog-style Qt window so Hyprland can treat it like a floating manager window by default.
+
 For Qt theme diagnostics:
 
 ```bash
