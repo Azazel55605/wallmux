@@ -30,7 +30,10 @@ class FakeRunner(CommandRunner):
 
 
 def sample_config(tmp_path: Path) -> dict:
-    return load_config(tmp_path / "config.toml")
+    config = load_config(tmp_path / "config.toml")
+    config["hooks"]["before_set"] = []
+    config["hooks"]["after_set"] = []
+    return config
 
 
 def test_set_image_executes_awww_and_saves_state(tmp_path: Path) -> None:
@@ -162,3 +165,27 @@ def test_replaces_tracked_video_process(tmp_path: Path, monkeypatch) -> None:
     state = load_state(state_path)
     assert state.monitors["DP-1"].file == str(second_video)
     assert state.monitors["DP-1"].pid == 4202
+
+
+def test_runs_hooks_around_backend_execution(tmp_path: Path, monkeypatch) -> None:
+    runner = FakeRunner()
+    state_path = tmp_path / "state.json"
+    image = tmp_path / "wallpaper.png"
+    image.write_bytes(b"")
+    events: list[str] = []
+
+    def run_hook_stage(stage, config, context):
+        events.append(stage)
+
+    monkeypatch.setattr("wallmux.core.wallpaper.run_hook_stage", run_hook_stage)
+
+    set_wallpaper(
+        image,
+        "DP-1",
+        config=sample_config(tmp_path),
+        runner=runner,
+        state_path=state_path,
+    )
+
+    assert events == ["before_set", "after_set"]
+    assert runner.runs

@@ -28,13 +28,15 @@ class WallmuxDaemon:
         self,
         *,
         socket_path: Path | None = None,
+        config_path: Path | None = None,
         config: dict[str, Any] | None = None,
         runner: CommandRunner | None = None,
         state_path: Path | None = None,
         restore_on_startup: bool | None = None,
     ) -> None:
         self.socket_path = socket_path or default_socket_path()
-        self.config = config or load_config()
+        self.config_path = config_path
+        self.config = config or load_config(config_path)
         self.runner = runner
         self.state_path = state_path
         self.restore_on_startup = (
@@ -84,6 +86,8 @@ class WallmuxDaemon:
                 return self._handle_set(request)
             if command == "restore":
                 return self._handle_restore()
+            if command == "reload":
+                return self._handle_reload()
             if command == "stop-video":
                 return self._handle_stop_video(request)
             if command == "state":
@@ -104,7 +108,11 @@ class WallmuxDaemon:
         if changed:
             save_state(state, self.state_path)
 
+    def reload_config(self) -> None:
+        self.config = load_config(self.config_path)
+
     def _handle_set(self, request: dict[str, Any]) -> dict[str, Any]:
+        self.reload_config()
         file = Path(request["file"])
         if request.get("all"):
             results = set_wallpaper_for_all(
@@ -136,12 +144,17 @@ class WallmuxDaemon:
         return {"ok": True, "results": [_serialize_result(result) for result in results]}
 
     def _handle_restore(self) -> dict[str, Any]:
+        self.reload_config()
         results = restore_wallpapers(
             config=self.config,
             runner=self.runner,
             state_path=self.state_path,
         )
         return {"ok": True, "results": [_serialize_result(result) for result in results]}
+
+    def _handle_reload(self) -> dict[str, Any]:
+        self.reload_config()
+        return {"ok": True}
 
     def _handle_stop_video(self, request: dict[str, Any]) -> dict[str, Any]:
         monitor = request["monitor"]

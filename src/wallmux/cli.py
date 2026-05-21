@@ -43,6 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
     restore = subparsers.add_parser("restore", help="Restore saved wallpaper state.")
     restore.set_defaults(command="restore")
 
+    reload_config = subparsers.add_parser("reload", help="Reload wallmuxd config.")
+    reload_config.set_defaults(command="reload")
+
     stop_video = subparsers.add_parser("stop-video", help="Stop tracked video wallpaper process.")
     stop_video.add_argument("--monitor", required=True)
 
@@ -112,6 +115,18 @@ def main(argv: list[str] | None = None) -> int:
         for result in results:
             pid = f" pid={result.pid}" if result.pid else ""
             print(f"restored {result.file} for {result.monitor} via {result.backend}{pid}")
+        return 0
+
+    if args.command == "reload":
+        try:
+            response = send_request({"command": "reload"})
+        except DaemonUnavailable as error:
+            print(f"wallmuxctl: {error}")
+            return 1
+        if not response.get("ok"):
+            print(f"wallmuxctl: {response.get('error', 'unknown daemon error')}")
+            return 1
+        print("wallmuxd config reloaded")
         return 0
 
     if args.command == "stop-video":

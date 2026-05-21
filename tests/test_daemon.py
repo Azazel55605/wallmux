@@ -28,6 +28,10 @@ def sample_config(tmp_path: Path) -> dict:
     return load_config(tmp_path / "config.toml")
 
 
+def sample_config_path(tmp_path: Path) -> Path:
+    return tmp_path / "config.toml"
+
+
 def test_daemon_handles_set_request(tmp_path: Path) -> None:
     runner = FakeRunner()
     state_path = tmp_path / "state.json"
@@ -35,6 +39,7 @@ def test_daemon_handles_set_request(tmp_path: Path) -> None:
     image.write_bytes(b"")
     daemon = WallmuxDaemon(
         config=sample_config(tmp_path),
+        config_path=sample_config_path(tmp_path),
         runner=runner,
         state_path=state_path,
         restore_on_startup=False,
@@ -51,6 +56,52 @@ def test_daemon_handles_set_request(tmp_path: Path) -> None:
     assert response["ok"] is True
     assert response["results"][0]["backend"] == "awww"
     assert runner.runs[0][4] == "DP-1"
+
+
+def test_daemon_reloads_config_for_set_request(tmp_path: Path, monkeypatch) -> None:
+    runner = FakeRunner()
+    state_path = tmp_path / "state.json"
+    image = tmp_path / "wallpaper.png"
+    image.write_bytes(b"")
+    config_path = sample_config_path(tmp_path)
+    config = load_config(config_path)
+    config["backend_rules"]["image"] = "swww"
+    monkeypatch.setattr("wallmux.core.daemon.load_config", lambda *_args: config)
+    daemon = WallmuxDaemon(
+        config=sample_config(tmp_path),
+        config_path=config_path,
+        runner=runner,
+        state_path=state_path,
+        restore_on_startup=False,
+    )
+
+    response = daemon.handle_request(
+        {
+            "command": "set",
+            "file": str(image),
+            "monitor": "DP-1",
+        }
+    )
+
+    assert response["ok"] is True
+    assert response["results"][0]["backend"] == "swww"
+
+
+def test_daemon_handles_reload_request(tmp_path: Path, monkeypatch) -> None:
+    config = sample_config(tmp_path)
+    config["backend_rules"]["image"] = "swww"
+    monkeypatch.setattr("wallmux.core.daemon.load_config", lambda *_args: config)
+    daemon = WallmuxDaemon(
+        config=sample_config(tmp_path),
+        config_path=sample_config_path(tmp_path),
+        state_path=tmp_path / "state.json",
+        restore_on_startup=False,
+    )
+
+    response = daemon.handle_request({"command": "reload"})
+
+    assert response == {"ok": True}
+    assert daemon.config["backend_rules"]["image"] == "swww"
 
 
 def test_daemon_handles_restore_request(tmp_path: Path) -> None:
@@ -72,6 +123,7 @@ def test_daemon_handles_restore_request(tmp_path: Path) -> None:
     )
     daemon = WallmuxDaemon(
         config=sample_config(tmp_path),
+        config_path=sample_config_path(tmp_path),
         runner=runner,
         state_path=state_path,
         restore_on_startup=False,
@@ -108,6 +160,7 @@ def test_daemon_stops_tracked_video(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("wallmux.core.daemon.terminate_pid", terminate)
     daemon = WallmuxDaemon(
         config=sample_config(tmp_path),
+        config_path=sample_config_path(tmp_path),
         state_path=state_path,
         restore_on_startup=False,
     )
@@ -137,6 +190,7 @@ def test_daemon_cleans_stale_pids(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("wallmux.core.daemon.pid_is_alive", lambda pid: False)
     daemon = WallmuxDaemon(
         config=sample_config(tmp_path),
+        config_path=sample_config_path(tmp_path),
         state_path=state_path,
         restore_on_startup=False,
     )
@@ -149,6 +203,7 @@ def test_daemon_cleans_stale_pids(tmp_path: Path, monkeypatch) -> None:
 def test_daemon_reports_invalid_json(tmp_path: Path) -> None:
     daemon = WallmuxDaemon(
         config=sample_config(tmp_path),
+        config_path=sample_config_path(tmp_path),
         state_path=tmp_path / "state.json",
         restore_on_startup=False,
     )
@@ -162,6 +217,7 @@ def test_daemon_reports_invalid_json(tmp_path: Path) -> None:
 def test_daemon_reports_empty_state(tmp_path: Path) -> None:
     daemon = WallmuxDaemon(
         config=sample_config(tmp_path),
+        config_path=sample_config_path(tmp_path),
         state_path=tmp_path / "state.json",
         restore_on_startup=False,
     )

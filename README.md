@@ -30,6 +30,7 @@ wallmuxctl monitors
 wallmuxctl set ~/Wallpapers/foo.png --monitor DP-1
 wallmuxctl restore
 wallmuxctl state
+wallmuxctl reload
 wallmuxctl stop-video --monitor DP-1
 wallmuxd
 wallmux-gui
@@ -40,6 +41,8 @@ By default, `wallmuxctl set` and `wallmuxctl restore` try to talk to `wallmuxd` 
 ```bash
 wallmuxctl --direct set ~/Wallpapers/foo.png --monitor DP-1
 ```
+
+`wallmuxd` reloads config before `set` and `restore`, so hook edits are picked up automatically. You can also run `wallmuxctl reload` explicitly after editing config.
 
 ## GUI
 
@@ -73,6 +76,22 @@ Wallmux stores user config at:
 ```
 
 If the file does not exist, Wallmux creates it from the packaged defaults. Future default config changes are merged automatically: changed user values are kept, new defaults are added, and removed defaults are pruned.
+
+## Hooks
+
+Wallmux supports `before_set` and `after_set` hooks in `~/.config/wallmux/config.toml`.
+
+Supported placeholders:
+
+- `{file}`
+- `{monitor}`
+- `{backend}`
+- `{mime}`
+- `{basename}`
+- `{thumbnail}`
+- `{source_for_colors}`
+
+For images, `{source_for_colors}` is the wallpaper file. For videos, it is the generated thumbnail when available. Hook failures are logged to `~/.local/state/wallmux/hooks.log` and do not roll back wallpaper changes.
 
 ## Development
 

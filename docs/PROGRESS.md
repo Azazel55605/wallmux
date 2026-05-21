@@ -99,15 +99,15 @@ Goal: usable Waypaper-like manager.
 
 Goal: fit into Hyprland rice/theme workflows.
 
-- [~] Define supported hook placeholders
-- [~] Add hook command formatter
-- [ ] Run `before_set` hooks
-- [ ] Run `after_set` hooks
-- [ ] Add hook timeout
-- [ ] Log hook failures without reverting wallpaper changes
-- [ ] Resolve video `{source_for_colors}` to thumbnail
-- [ ] Add per-backend hook enable/disable
-- [ ] Add hook log viewer
+- [x] Define supported hook placeholders
+- [x] Add hook command formatter
+- [x] Run `before_set` hooks
+- [x] Run `after_set` hooks
+- [x] Add hook timeout
+- [x] Log hook failures without reverting wallpaper changes
+- [x] Resolve video `{source_for_colors}` to thumbnail
+- [x] Add per-backend hook enable/disable
+- [x] Add hook log viewer
 
 ## Phase 5: Transition Polish
 
@@ -174,3 +174,4 @@ Record notable checks here as the project moves.
 - 2026-05-21: `ruff check .` passed.
 - 2026-05-21: Finished Phase 3 GUI v1 with PySide6 browser, folder picker, thumbnail grid, filters, monitor selector, backend preview, settings folder management, and set-wallpaper action.
 - 2026-05-21: Added GUI background thumbnail generation, Qt theme/plugin discovery, zen mode, keyboard navigation, and a dialog-style floating hint.
+- 2026-05-21: Finished Phase 4 hooks with before/after stages, placeholders, timeouts, failure logging, video thumbnail color source, per-backend hook enable flags, and GUI hook log viewer.

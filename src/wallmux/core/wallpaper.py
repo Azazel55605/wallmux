@@ -9,6 +9,7 @@ from typing import Protocol
 
 from wallmux.backends.routing import build_backend, route_wallpaper
 from wallmux.core.config import load_config
+from wallmux.core.hooks import HookContext, run_hook_stage
 from wallmux.core.mime import WallpaperType, detect_wallpaper_type
 from wallmux.core.monitors import Monitor, get_focused_monitor, list_monitors
 from wallmux.core.process import pid_is_alive, terminate_pid
@@ -67,6 +68,14 @@ def set_wallpaper(
     backend_name = route_wallpaper(wallpaper_type, config.get("backend_rules", {}))
     backend = build_backend(backend_name, config)
     command = backend.build_set_command(resolved_file, monitor)
+    hook_context = HookContext(
+        file=resolved_file,
+        monitor=monitor,
+        backend=backend_name,
+        wallpaper_type=wallpaper_type,
+    )
+
+    run_hook_stage("before_set", config, hook_context)
 
     state = load_state(state_path)
     previous = state.monitors.get(monitor)
@@ -81,6 +90,7 @@ def set_wallpaper(
         pid=pid,
     )
     save_state(state, state_path)
+    run_hook_stage("after_set", config, hook_context)
 
     return SetResult(
         monitor=monitor,

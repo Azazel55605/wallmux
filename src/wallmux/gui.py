@@ -7,6 +7,7 @@ import traceback
 from pathlib import Path
 
 from wallmux.core.config import load_config, user_config_file, write_config
+from wallmux.core.hooks import hook_log_file
 from wallmux.core.ipc import DaemonUnavailable, send_request
 from wallmux.core.library import WallpaperItem, filter_wallpapers, scan_wallpaper_dir
 from wallmux.core.mime import WallpaperType
@@ -37,6 +38,7 @@ try:
         QStyle,
         QStyleFactory,
         QTabWidget,
+        QTextEdit,
         QToolBar,
         QVBoxLayout,
         QWidget,
@@ -246,8 +248,22 @@ class WallmuxWindow(QMainWindow):
         buttons.addStretch(1)
         layout.addLayout(buttons)
 
+        self.hook_log_view = QTextEdit()
+        self.hook_log_view.setReadOnly(True)
+        self.hook_log_view.setMinimumHeight(140)
+        layout.addWidget(QLabel("Hook Log"))
+        layout.addWidget(self.hook_log_view)
+
+        hook_buttons = QHBoxLayout()
+        refresh_hooks_button = QPushButton("Refresh Hook Log")
+        refresh_hooks_button.clicked.connect(self.refresh_hook_log)
+        hook_buttons.addWidget(refresh_hooks_button)
+        hook_buttons.addStretch(1)
+        layout.addLayout(hook_buttons)
+
         self.tabs.addTab(tab, "Settings")
         self.refresh_settings()
+        self.refresh_hook_log()
 
     def _load_initial_folder(self) -> None:
         dirs = self.config.get("general", {}).get("wallpaper_dirs", [])
@@ -385,6 +401,16 @@ class WallmuxWindow(QMainWindow):
         self.folder_list.clear()
         for folder in self.config.get("general", {}).get("wallpaper_dirs", []):
             self.folder_list.addItem(folder)
+
+    def refresh_hook_log(self) -> None:
+        log_file = hook_log_file()
+        if not log_file.exists():
+            self.hook_log_view.setPlainText("No hook log yet.")
+            return
+
+        content = log_file.read_text(encoding="utf-8", errors="replace")
+        lines = content.splitlines()
+        self.hook_log_view.setPlainText("\n".join(lines[-200:]))
 
     def toggle_zen_mode(self) -> None:
         self.set_zen_mode(not self.zen_mode)

@@ -33,10 +33,14 @@ command = "gslapper"
 
 [hooks]
 before_set = []
-after_set = [
-  "matugen image {source_for_colors}",
-]
+after_set = []
 timeout_seconds = 30
+
+[hooks.backends]
+awww = true
+swww = true
+mpvpaper = true
+gslapper = true
 
 [colors]
 video_color_source = "thumbnail"
