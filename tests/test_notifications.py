@@ -23,6 +23,7 @@ def test_notify_wallpaper_switched_uses_notify_send(monkeypatch) -> None:
             "command": "notify-send",
             "app_name": "Wallmux",
             "icon": "wallmux-gui",
+            "desktop_entry": "wallmux-gui",
         }
     }
 
@@ -40,7 +41,11 @@ def test_notify_wallpaper_switched_uses_notify_send(monkeypatch) -> None:
             "--icon",
             expected_icon,
             "--app-icon",
-            "wallmux-gui",
+            expected_icon,
+            "--hint",
+            f"string:image-path:{expected_icon}",
+            "--hint",
+            "string:desktop-entry:wallmux-gui",
             "Wallpaper switched",
             "wall.png on DP-1 via awww",
         ]
@@ -62,7 +67,14 @@ def test_notify_icon_can_be_disabled(monkeypatch) -> None:
     )
 
     notify_switch_failed(
-        {"notifications": {"enabled": True, "switching_failed": True, "icon": ""}},
+        {
+            "notifications": {
+                "enabled": True,
+                "switching_failed": True,
+                "icon": "",
+                "desktop_entry": "",
+            }
+        },
         RuntimeError("boom"),
     )
 

@@ -369,12 +369,14 @@ class WallmuxWindow(QMainWindow):
         self.notification_command_edit = QLineEdit()
         self.notification_app_name_edit = QLineEdit()
         self.notification_icon_edit = QLineEdit()
+        self.notification_desktop_entry_edit = QLineEdit()
         notifications_form.addRow("", self.notifications_enabled_check)
         notifications_form.addRow("", self.notify_switched_check)
         notifications_form.addRow("", self.notify_failed_check)
         notifications_form.addRow("Command", self.notification_command_edit)
         notifications_form.addRow("App Name", self.notification_app_name_edit)
         notifications_form.addRow("Icon", self.notification_icon_edit)
+        notifications_form.addRow("Desktop Entry", self.notification_desktop_entry_edit)
         save_notifications_button = QPushButton("Save Notifications")
         save_notifications_button.clicked.connect(self.save_notification_settings)
         notifications_form.addRow("", save_notifications_button)
@@ -859,6 +861,7 @@ class WallmuxWindow(QMainWindow):
             "command": self.notification_command_edit.text(),
             "app_name": self.notification_app_name_edit.text(),
             "icon": self.notification_icon_edit.text(),
+            "desktop_entry": self.notification_desktop_entry_edit.text(),
         }
         write_config(self.config, user_config_file())
         try:
@@ -959,6 +962,9 @@ class WallmuxWindow(QMainWindow):
         self.notification_command_edit.setText(str(notifications.get("command", "notify-send")))
         self.notification_app_name_edit.setText(str(notifications.get("app_name", "Wallmux")))
         self.notification_icon_edit.setText(str(notifications.get("icon", "wallmux-gui")))
+        self.notification_desktop_entry_edit.setText(
+            str(notifications.get("desktop_entry", "wallmux-gui"))
+        )
 
     def _pattern_lines(self, text_edit: QTextEdit) -> list[str]:
         return [

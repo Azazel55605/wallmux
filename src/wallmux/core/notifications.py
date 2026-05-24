@@ -45,9 +45,14 @@ def send_notification(config: dict[str, Any], title: str, body: str) -> None:
     command = str(settings.get("command", "notify-send"))
     app_name = str(settings.get("app_name", "Wallmux"))
     icon = str(settings.get("icon", "wallmux-gui")).strip()
+    desktop_entry = str(settings.get("desktop_entry", "wallmux-gui")).strip()
     notification_command = [command, "--app-name", app_name]
     if icon:
-        notification_command.extend(["--icon", notification_icon(icon), "--app-icon", icon])
+        resolved_icon = notification_icon(icon)
+        notification_command.extend(["--icon", resolved_icon, "--app-icon", resolved_icon])
+        notification_command.extend(["--hint", f"string:image-path:{resolved_icon}"])
+    if desktop_entry:
+        notification_command.extend(["--hint", f"string:desktop-entry:{desktop_entry}"])
     notification_command.extend([title, body])
     try:
         subprocess.Popen(
