@@ -10,7 +10,7 @@ from typing import Any
 from platformdirs import user_runtime_path
 
 APP_NAME = "wallmux"
-DEFAULT_TIMEOUT_SECONDS = 2.0
+DEFAULT_TIMEOUT_SECONDS = 60.0
 
 
 class DaemonUnavailable(RuntimeError):

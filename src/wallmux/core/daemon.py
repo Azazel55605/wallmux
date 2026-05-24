@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import socket
+import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -56,15 +57,13 @@ class WallmuxDaemon:
             else restore_on_startup
         )
         self.next_autoswitch_at = time.monotonic() + autoswitch_interval(self.config)
+        self.startup_restore_pending = False
+        self.next_startup_restore_at = time.monotonic()
 
     def start(self) -> None:
         self.cleanup_stale_pids()
         if self.restore_on_startup:
-            restore_wallpapers(
-                config=self.config,
-                runner=self.runner,
-                state_path=self.state_path,
-            )
+            self._restore_on_startup()
 
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         if self.socket_path.exists():
@@ -83,7 +82,12 @@ class WallmuxDaemon:
                         continue
                     with connection:
                         response = self.handle_raw_request(connection.recv(65536))
-                        connection.sendall(json.dumps(response).encode("utf-8") + b"\n")
+                        try:
+                            connection.sendall(
+                                json.dumps(response).encode("utf-8") + b"\n"
+                            )
+                        except (BrokenPipeError, ConnectionResetError):
+                            pass
                     self.tick()
             finally:
                 if self.socket_path.exists():
@@ -133,6 +137,7 @@ class WallmuxDaemon:
         self.next_autoswitch_at = time.monotonic() + autoswitch_interval(self.config)
 
     def tick(self) -> None:
+        self._retry_startup_restore()
         if not autoswitch_enabled(self.config):
             return
         now = time.monotonic()
@@ -295,6 +300,36 @@ class WallmuxDaemon:
             "monitor": autoswitch_monitor(self.config),
             "next_switch_seconds": max(0.0, self.next_autoswitch_at - time.monotonic()),
         }
+
+    def _restore_on_startup(self) -> None:
+        try:
+            restore_wallpapers(
+                config=self.config,
+                runner=self.runner,
+                state_path=self.state_path,
+            )
+        except (ValueError, WallmuxError) as error:
+            self.startup_restore_pending = True
+            self.next_startup_restore_at = time.monotonic() + self._restore_retry_seconds()
+            print(
+                f"wallmuxd: startup restore failed; will retry: {error}",
+                file=sys.stderr,
+            )
+        else:
+            self.startup_restore_pending = False
+
+    def _retry_startup_restore(self) -> None:
+        if not self.startup_restore_pending:
+            return
+        if time.monotonic() < self.next_startup_restore_at:
+            return
+        self._restore_on_startup()
+
+    def _restore_retry_seconds(self) -> float:
+        return max(
+            1.0,
+            float(self.config.get("daemon", {}).get("startup_restore_retry_seconds", 5.0)),
+        )
 
 
 def _serialize_result(result: SetResult) -> dict[str, Any]:

@@ -6,7 +6,7 @@ from wallmux.core.config import load_config
 from wallmux.core.daemon import WallmuxDaemon
 from wallmux.core.ipc import DaemonUnavailable, send_request
 from wallmux.core.state import WallmuxState, WallpaperEntry, load_state, save_state
-from wallmux.core.wallpaper import CommandRunner
+from wallmux.core.wallpaper import CommandRunner, WallmuxError
 
 
 class FakeRunner(CommandRunner):
@@ -134,6 +134,37 @@ def test_daemon_handles_restore_request(tmp_path: Path) -> None:
     assert response["ok"] is True
     assert response["results"][0]["monitor"] == "DP-1"
     assert runner.runs[0][2] == str(image)
+
+
+def test_daemon_startup_restore_failure_is_retryable(tmp_path: Path, monkeypatch) -> None:
+    calls = 0
+
+    def restore(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise WallmuxError("awww-daemon is not ready")
+        return []
+
+    monkeypatch.setattr("wallmux.core.daemon.restore_wallpapers", restore)
+    monkeypatch.setattr("wallmux.core.daemon.time.monotonic", lambda: 100.0)
+    config = sample_config(tmp_path)
+    config["daemon"]["startup_restore_retry_seconds"] = 1.0
+    daemon = WallmuxDaemon(
+        config=config,
+        config_path=sample_config_path(tmp_path),
+        state_path=tmp_path / "state.json",
+        restore_on_startup=True,
+    )
+
+    daemon._restore_on_startup()
+    assert daemon.startup_restore_pending is True
+
+    monkeypatch.setattr("wallmux.core.daemon.time.monotonic", lambda: 101.0)
+    daemon.tick()
+
+    assert calls == 2
+    assert daemon.startup_restore_pending is False
 
 
 def test_daemon_stops_tracked_video(tmp_path: Path, monkeypatch) -> None:

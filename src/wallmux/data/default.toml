@@ -62,6 +62,9 @@ mode = "random"
 target = "all"
 monitor = ""
 
+[daemon]
+startup_restore_retry_seconds = 5.0
+
 [transitions]
 video_stop_timeout_seconds = 2.0
 kill_video_on_timeout = true
