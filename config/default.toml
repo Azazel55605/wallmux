@@ -87,6 +87,7 @@ switched_wallpaper = true
 switching_failed = true
 command = "notify-send"
 app_name = "Wallmux"
+icon = "wallmux-gui"
 
 [daemon]
 startup_restore_retry_seconds = 5.0

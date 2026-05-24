@@ -189,6 +189,7 @@ switched_wallpaper = true
 switching_failed = true
 command = "notify-send"
 app_name = "Wallmux"
+icon = "wallmux-gui"
 ```
 
 The default `mpvpaper` options ignore the user's mpv config, suppress mpv status output, crop/fill mixed aspect-ratio monitors, and use cheaper scaling for large videos:

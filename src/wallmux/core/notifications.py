@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -43,11 +44,49 @@ def send_notification(config: dict[str, Any], title: str, body: str) -> None:
     settings = notifications_config(config)
     command = str(settings.get("command", "notify-send"))
     app_name = str(settings.get("app_name", "Wallmux"))
+    icon = str(settings.get("icon", "wallmux-gui")).strip()
+    notification_command = [command, "--app-name", app_name]
+    if icon:
+        notification_command.extend(["--icon", notification_icon(icon), "--app-icon", icon])
+    notification_command.extend([title, body])
     try:
         subprocess.Popen(
-            [command, "--app-name", app_name, title, body],
+            notification_command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
     except OSError:
         return
+
+
+def notification_icon(icon: str) -> str:
+    configured_icon = Path(icon).expanduser()
+    if configured_icon.exists():
+        return str(configured_icon)
+
+    for candidate in _icon_candidates(icon):
+        if candidate.exists():
+            return str(candidate)
+
+    try:
+        icon_resource = files("wallmux.data").joinpath(f"{icon}.svg")
+        if icon_resource.is_file():
+            return str(icon_resource)
+    except (FileNotFoundError, ModuleNotFoundError):
+        pass
+
+    return icon
+
+
+def _icon_candidates(icon: str) -> list[Path]:
+    icon_names = [icon]
+    if not icon.endswith(".svg"):
+        icon_names.append(f"{icon}.svg")
+
+    roots = [
+        Path.home() / ".local/share/icons/hicolor/scalable/apps",
+        Path.home() / ".local/share/pixmaps",
+        Path("/usr/share/icons/hicolor/scalable/apps"),
+        Path("/usr/share/pixmaps"),
+    ]
+    return [root / icon_name for root in roots for icon_name in icon_names]
