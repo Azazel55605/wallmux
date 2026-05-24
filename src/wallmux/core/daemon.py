@@ -4,12 +4,23 @@ from __future__ import annotations
 
 import json
 import socket
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from wallmux.core.autoswitch import (
+    autoswitch_enabled,
+    autoswitch_interval,
+    autoswitch_mode,
+    autoswitch_monitor,
+    autoswitch_target,
+    choose_wallpaper,
+    load_wallpaper_library,
+)
 from wallmux.core.config import load_config
 from wallmux.core.ipc import default_socket_path
+from wallmux.core.monitors import get_focused_monitor, list_monitors
 from wallmux.core.process import pid_is_alive, terminate_pid
 from wallmux.core.state import load_state, save_state
 from wallmux.core.wallpaper import (
@@ -44,6 +55,7 @@ class WallmuxDaemon:
             if restore_on_startup is None
             else restore_on_startup
         )
+        self.next_autoswitch_at = time.monotonic() + autoswitch_interval(self.config)
 
     def start(self) -> None:
         self.cleanup_stale_pids()
@@ -61,12 +73,18 @@ class WallmuxDaemon:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
             server.bind(str(self.socket_path))
             server.listen()
+            server.settimeout(0.5)
             try:
                 while True:
-                    connection, _ = server.accept()
+                    try:
+                        connection, _ = server.accept()
+                    except TimeoutError:
+                        self.tick()
+                        continue
                     with connection:
                         response = self.handle_raw_request(connection.recv(65536))
                         connection.sendall(json.dumps(response).encode("utf-8") + b"\n")
+                    self.tick()
             finally:
                 if self.socket_path.exists():
                     self.socket_path.unlink()
@@ -88,6 +106,8 @@ class WallmuxDaemon:
                 return self._handle_restore()
             if command == "reload":
                 return self._handle_reload()
+            if command == "autoswitch-now":
+                return self._handle_autoswitch_now(request)
             if command == "stop-video":
                 return self._handle_stop_video(request)
             if command == "state":
@@ -110,6 +130,18 @@ class WallmuxDaemon:
 
     def reload_config(self) -> None:
         self.config = load_config(self.config_path)
+        self.next_autoswitch_at = time.monotonic() + autoswitch_interval(self.config)
+
+    def tick(self) -> None:
+        if not autoswitch_enabled(self.config):
+            return
+        now = time.monotonic()
+        if now < self.next_autoswitch_at:
+            return
+        try:
+            self.autoswitch_once()
+        finally:
+            self.next_autoswitch_at = now + autoswitch_interval(self.config)
 
     def _handle_set(self, request: dict[str, Any]) -> dict[str, Any]:
         self.reload_config()
@@ -165,6 +197,17 @@ class WallmuxDaemon:
         self.reload_config()
         return {"ok": True}
 
+    def _handle_autoswitch_now(self, request: dict[str, Any]) -> dict[str, Any]:
+        self.reload_config()
+        mode = request.get("mode")
+        results = self.autoswitch_once(
+            mode=mode,
+            target=request.get("target"),
+            monitor=request.get("monitor"),
+        )
+        self.next_autoswitch_at = time.monotonic() + autoswitch_interval(self.config)
+        return {"ok": True, "results": [_serialize_result(result) for result in results]}
+
     def _handle_stop_video(self, request: dict[str, Any]) -> dict[str, Any]:
         monitor = request["monitor"]
         state = load_state(self.state_path)
@@ -179,7 +222,79 @@ class WallmuxDaemon:
 
     def _handle_state(self) -> dict[str, Any]:
         state = load_state(self.state_path)
-        return {"ok": True, "state": asdict(state)}
+        return {
+            "ok": True,
+            "state": asdict(state),
+            "daemon": {
+                "running": True,
+                "autoswitch": self._autoswitch_status(),
+            },
+        }
+
+    def autoswitch_once(
+        self,
+        *,
+        mode: str | None = None,
+        target: str | None = None,
+        monitor: str | None = None,
+    ) -> list[SetResult]:
+        selected_mode = mode or autoswitch_mode(self.config)
+        items = load_wallpaper_library(self.config)
+        selected_target = target or autoswitch_target(self.config)
+        selected_monitor = monitor or autoswitch_monitor(self.config)
+        current_file = self._current_file_for_target(selected_target, selected_monitor)
+        item = choose_wallpaper(items, mode=selected_mode, current_file=current_file)
+
+        if selected_target == "all":
+            return set_wallpaper_for_all(
+                item.path,
+                config=self.config,
+                runner=self.runner,
+                state_path=self.state_path,
+            )
+        if selected_target == "focused":
+            return [
+                set_wallpaper_for_focused(
+                    item.path,
+                    config=self.config,
+                    runner=self.runner,
+                    state_path=self.state_path,
+                )
+            ]
+        if not selected_monitor:
+            raise WallmuxError("autoswitch target is monitor but no monitor is configured")
+        return [
+            set_wallpaper(
+                item.path,
+                selected_monitor,
+                config=self.config,
+                runner=self.runner,
+                state_path=self.state_path,
+            )
+        ]
+
+    def _current_file_for_target(self, target: str, monitor: str) -> str | None:
+        state = load_state(self.state_path)
+        if target == "monitor" and monitor in state.monitors:
+            return state.monitors[monitor].file
+        if target == "focused":
+            focused = get_focused_monitor(list_monitors())
+            if focused and focused.name in state.monitors:
+                return state.monitors[focused.name].file
+        if state.monitors:
+            first_monitor = sorted(state.monitors)[0]
+            return state.monitors[first_monitor].file
+        return None
+
+    def _autoswitch_status(self) -> dict[str, Any]:
+        return {
+            "enabled": autoswitch_enabled(self.config),
+            "interval_seconds": autoswitch_interval(self.config),
+            "mode": autoswitch_mode(self.config),
+            "target": autoswitch_target(self.config),
+            "monitor": autoswitch_monitor(self.config),
+            "next_switch_seconds": max(0.0, self.next_autoswitch_at - time.monotonic()),
+        }
 
 
 def _serialize_result(result: SetResult) -> dict[str, Any]:

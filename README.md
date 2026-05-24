@@ -30,6 +30,10 @@ wallmuxctl monitors
 wallmuxctl set ~/Wallpapers/foo.png --monitor DP-1
 wallmuxctl restore
 wallmuxctl state
+wallmuxctl random --all
+wallmuxctl autoswitch status
+wallmuxctl autoswitch set --enable --interval 300 --mode random --target all
+wallmuxctl autoswitch now
 wallmuxctl reload
 wallmuxctl stop-video --monitor DP-1
 wallmuxd
@@ -43,6 +47,8 @@ wallmuxctl --direct set ~/Wallpapers/foo.png --monitor DP-1
 ```
 
 `wallmuxd` reloads config before `set` and `restore`, so hook edits are picked up automatically. You can also run `wallmuxctl reload` explicitly after editing config.
+
+Auto switching is daemon-owned. If `wallmuxd` is not running, `wallmuxctl autoswitch status` reports that clearly and daemon-only actions fail with a daemon-required message. Manual `wallmuxctl random` can still fall back to direct execution.
 
 ## GUI
 
@@ -133,6 +139,17 @@ all_monitor_mode = "simultaneous" # or "sequential"
 ```
 
 For `awww` and `swww`, simultaneous mode sends one command with all outputs joined, so `any` and `random` transitions choose one shared effect across monitors.
+
+Auto switching is configured with:
+
+```toml
+[autoswitch]
+enabled = false
+interval_seconds = 300
+mode = "random" # random, name-up, or name-down
+target = "all"  # all, focused, or monitor
+monitor = ""
+```
 
 The default `mpvpaper` options ignore the user's mpv config, suppress mpv status output, crop/fill mixed aspect-ratio monitors, and use cheaper scaling for large videos:
 

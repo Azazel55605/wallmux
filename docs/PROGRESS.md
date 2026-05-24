@@ -184,3 +184,5 @@ Record notable checks here as the project moves.
 - 2026-05-24: `pytest` passed, 48 tests.
 - 2026-05-24: Added full `awww`/`swww` transition defaults for type, step, duration, FPS, angle, position, invert-y, bezier, and wave dimensions.
 - 2026-05-24: Changed simultaneous all-monitor image sets to issue one unified `awww`/`swww` command with comma-separated outputs, keeping random/any transitions consistent across monitors.
+- 2026-05-24: Added daemon-owned auto switching with random/name-up/name-down selection, GUI controls, CLI controls, manual `wallmuxctl random`, and daemon status reporting.
+- 2026-05-24: `pytest` passed, 51 tests.

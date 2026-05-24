@@ -131,6 +131,7 @@ class WallmuxWindow(QMainWindow):
         self.pending_thumbnails: set[str] = set()
         self.thumbnail_tasks: dict[str, ThumbnailTask] = {}
         self.zen_mode = False
+        self.daemon_running = False
         self.thumbnail_size = int(self.config.get("general", {}).get("thumbnail_size", 256))
         self.thread_pool = QThreadPool.globalInstance()
         self.thread_pool.setMaxThreadCount(min(4, max(2, self.thread_pool.maxThreadCount())))
@@ -148,6 +149,10 @@ class WallmuxWindow(QMainWindow):
         self._build_settings_tab()
         self._build_shortcuts()
         self._load_monitors()
+        self.refresh_daemon_status()
+        self.daemon_status_timer = QTimer(self)
+        self.daemon_status_timer.timeout.connect(self.refresh_daemon_status)
+        self.daemon_status_timer.start(5000)
         self.preview.setText("Choose a folder")
         QTimer.singleShot(0, self._load_initial_folder)
 
@@ -274,6 +279,40 @@ class WallmuxWindow(QMainWindow):
         self.all_monitor_mode_box.addItem("One by one", "sequential")
         general_form.addRow("All Monitors", self.all_monitor_mode_box)
         layout.addWidget(general_group)
+
+        autoswitch_group = QGroupBox("Auto Switching")
+        autoswitch_form = QFormLayout(autoswitch_group)
+        self.daemon_status_label = QLabel("wallmuxd: unknown")
+        self.autoswitch_enabled_check = QCheckBox("Enabled")
+        self.autoswitch_interval_spin = QDoubleSpinBox()
+        self.autoswitch_interval_spin.setRange(1.0, 86400.0)
+        self.autoswitch_interval_spin.setSingleStep(30.0)
+        self.autoswitch_interval_spin.setDecimals(0)
+        self.autoswitch_mode_box = QComboBox()
+        self.autoswitch_mode_box.addItem("Random", "random")
+        self.autoswitch_mode_box.addItem("Name up", "name-up")
+        self.autoswitch_mode_box.addItem("Name down", "name-down")
+        self.autoswitch_target_box = QComboBox()
+        self.autoswitch_target_box.addItem("All monitors", "all")
+        self.autoswitch_target_box.addItem("Focused monitor", "focused")
+        self.autoswitch_target_box.addItem("Specific monitor", "monitor")
+        self.autoswitch_monitor_edit = QLineEdit()
+        autoswitch_form.addRow("Daemon", self.daemon_status_label)
+        autoswitch_form.addRow("", self.autoswitch_enabled_check)
+        autoswitch_form.addRow("Interval", self.autoswitch_interval_spin)
+        autoswitch_form.addRow("Next Wallpaper", self.autoswitch_mode_box)
+        autoswitch_form.addRow("Target", self.autoswitch_target_box)
+        autoswitch_form.addRow("Monitor", self.autoswitch_monitor_edit)
+        autoswitch_buttons = QHBoxLayout()
+        save_autoswitch_button = QPushButton("Save Auto Switching")
+        save_autoswitch_button.clicked.connect(self.save_autoswitch_settings)
+        self.autoswitch_now_button = QPushButton("Switch Now")
+        self.autoswitch_now_button.clicked.connect(self.autoswitch_now)
+        autoswitch_buttons.addWidget(save_autoswitch_button)
+        autoswitch_buttons.addWidget(self.autoswitch_now_button)
+        autoswitch_buttons.addStretch(1)
+        autoswitch_form.addRow("", autoswitch_buttons)
+        layout.addWidget(autoswitch_group)
 
         self.folder_list = QListWidget()
         folders_group = QGroupBox("Wallpaper Folders")
@@ -659,12 +698,82 @@ class WallmuxWindow(QMainWindow):
             self.load_folder(self.current_folder)
         self.status.showMessage("Backend defaults saved", 5000)
 
+    def save_autoswitch_settings(self) -> None:
+        if self.autoswitch_enabled_check.isChecked() and not self.daemon_running:
+            QMessageBox.warning(
+                self,
+                "Wallmux",
+                "Auto switching requires wallmuxd. Start wallmuxd before enabling it.",
+            )
+            self.autoswitch_enabled_check.setChecked(False)
+            return
+
+        autoswitch = self.config.setdefault("autoswitch", {})
+        autoswitch["enabled"] = self.autoswitch_enabled_check.isChecked()
+        autoswitch["interval_seconds"] = self.autoswitch_interval_spin.value()
+        autoswitch["mode"] = self.autoswitch_mode_box.currentData()
+        autoswitch["target"] = self.autoswitch_target_box.currentData()
+        autoswitch["monitor"] = self.autoswitch_monitor_edit.text()
+        write_config(self.config, user_config_file())
+        try:
+            send_request({"command": "reload"})
+        except DaemonUnavailable:
+            self.status.showMessage("Auto switching saved; wallmuxd is not running", 6000)
+            self.refresh_daemon_status(False)
+            return
+        self.status.showMessage("Auto switching saved and reloaded", 5000)
+        self.refresh_daemon_status(True)
+
+    def autoswitch_now(self) -> None:
+        request = {
+            "command": "autoswitch-now",
+            "mode": self.autoswitch_mode_box.currentData(),
+            "target": self.autoswitch_target_box.currentData(),
+        }
+        if self.autoswitch_target_box.currentData() == "monitor":
+            request["monitor"] = self.autoswitch_monitor_edit.text()
+        try:
+            response = send_request(request)
+        except DaemonUnavailable as error:
+            QMessageBox.warning(self, "Wallmux", f"wallmuxd is not running: {error}")
+            self.refresh_daemon_status(False)
+            return
+        if not response.get("ok"):
+            QMessageBox.critical(self, "Wallmux", response.get("error", "unknown daemon error"))
+            return
+        self._show_set_results(response.get("results", []))
+        self.refresh_daemon_status(True)
+
     def refresh_settings(self) -> None:
         self.folder_list.clear()
         for folder in self.config.get("general", {}).get("wallpaper_dirs", []):
             self.folder_list.addItem(folder)
         self.refresh_backend_settings()
+        self.refresh_autoswitch_settings()
         self.refresh_transition_settings()
+
+    def refresh_daemon_status(self, running: bool | None = None) -> None:
+        if running is None:
+            try:
+                send_request({"command": "state"}, timeout_seconds=0.2)
+            except DaemonUnavailable:
+                running = False
+            else:
+                running = True
+        self.daemon_status_label.setText(
+            "wallmuxd: running" if running else "wallmuxd: not running"
+        )
+        self.daemon_running = running
+        self.autoswitch_now_button.setEnabled(running)
+        self.autoswitch_enabled_check.setEnabled(running)
+
+    def refresh_autoswitch_settings(self) -> None:
+        autoswitch = self.config.get("autoswitch", {})
+        self.autoswitch_enabled_check.setChecked(bool(autoswitch.get("enabled", False)))
+        self.autoswitch_interval_spin.setValue(float(autoswitch.get("interval_seconds", 300)))
+        self._set_combo_data(self.autoswitch_mode_box, str(autoswitch.get("mode", "random")))
+        self._set_combo_data(self.autoswitch_target_box, str(autoswitch.get("target", "all")))
+        self.autoswitch_monitor_edit.setText(str(autoswitch.get("monitor", "")))
 
     def refresh_backend_settings(self) -> None:
         general = self.config.get("general", {})

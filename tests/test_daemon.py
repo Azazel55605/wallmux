@@ -224,7 +224,10 @@ def test_daemon_reports_empty_state(tmp_path: Path) -> None:
 
     response = daemon.handle_request({"command": "state"})
 
-    assert response == {"ok": True, "state": {"monitors": {}}}
+    assert response["ok"] is True
+    assert response["state"] == {"monitors": {}}
+    assert response["daemon"]["running"] is True
+    assert response["daemon"]["autoswitch"]["enabled"] is False
 
 
 def test_send_request_reports_unavailable_daemon(tmp_path: Path) -> None:
