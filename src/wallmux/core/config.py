@@ -17,6 +17,7 @@ except ImportError:
 
 APP_NAME = "wallmux"
 DEFAULT_CONFIG_RESOURCE = "wallmux.data.default.toml"
+OLD_MPV_DEFAULT_OPTIONS = "no-audio loop hwdec=auto"
 
 
 def user_config_file() -> Path:
@@ -37,11 +38,24 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
     except tomllib.TOMLDecodeError:
         raise
 
-    config = reconcile_config(default_config, user_config)
+    migrated_user_config = apply_config_migrations(default_config, user_config)
+    config = reconcile_config(default_config, migrated_user_config)
     if config != user_config:
         write_config(config, config_path)
 
     return config
+
+
+def apply_config_migrations(
+    default_config: Mapping[str, Any],
+    user_config: Mapping[str, Any],
+) -> dict[str, Any]:
+    migrated = _copy_mapping(user_config)
+    mpvpaper = migrated.get("backends", {}).get("mpvpaper", {})
+    default_mpvpaper = default_config.get("backends", {}).get("mpvpaper", {})
+    if mpvpaper.get("options") == OLD_MPV_DEFAULT_OPTIONS:
+        mpvpaper["options"] = default_mpvpaper.get("options", OLD_MPV_DEFAULT_OPTIONS)
+    return migrated
 
 
 def default_config_text() -> str:
@@ -151,3 +165,15 @@ def _format_toml_value(value: Any) -> str:
 def _format_toml_string(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
+
+
+def _copy_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
+    copied: dict[str, Any] = {}
+    for key, item in value.items():
+        if isinstance(item, Mapping):
+            copied[key] = _copy_mapping(item)
+        elif isinstance(item, list):
+            copied[key] = list(item)
+        else:
+            copied[key] = item
+    return copied

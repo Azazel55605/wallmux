@@ -29,12 +29,13 @@ class TransitionPlan:
 def plan_transition(
     previous: WallpaperEntry | None,
     next_type: WallpaperType,
+    next_backend: str | None = None,
 ) -> TransitionPlan:
     if previous is None:
         return TransitionPlan(TransitionKind.FIRST_SET)
 
     previous_is_video = _entry_is_video(previous)
-    next_is_video = next_type is WallpaperType.VIDEO
+    next_is_video = next_type is WallpaperType.VIDEO or next_backend in VIDEO_BACKENDS
 
     if previous_is_video and next_is_video:
         return TransitionPlan(TransitionKind.VIDEO_TO_VIDEO, stop_previous_video=True)

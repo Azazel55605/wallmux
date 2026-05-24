@@ -88,3 +88,19 @@ image = "swww"
     assert config["backend_rules"]["image"] == "swww"
     assert "old_value" not in written
     assert "video" in written
+
+
+def test_load_config_migrates_old_mpvpaper_default_options(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[backends.mpvpaper]
+command = "mpvpaper"
+options = "no-audio loop hwdec=auto"
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config["backends"]["mpvpaper"]["options"].startswith("no-config no-audio")

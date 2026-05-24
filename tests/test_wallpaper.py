@@ -30,6 +30,10 @@ class FakeRunner(CommandRunner):
         return self.next_pid
 
 
+def _option(command: list[str], name: str) -> str:
+    return command[command.index(name) + 1]
+
+
 def sample_config(tmp_path: Path) -> dict:
     config = load_config(tmp_path / "config.toml")
     config["hooks"]["before_set"] = []
@@ -52,21 +56,17 @@ def test_set_image_executes_awww_and_saves_state(tmp_path: Path) -> None:
     )
 
     assert result.backend == "awww"
-    assert runner.runs == [
-        [
-            "awww",
-            "img",
-            str(image),
-            "--outputs",
-            "DP-1",
-            "--transition-type",
-            "grow",
-            "--transition-duration",
-            "0.8",
-            "--transition-fps",
-            "60",
-        ]
-    ]
+    command = runner.runs[0]
+    assert command[0:5] == ["awww", "img", str(image), "--outputs", "DP-1"]
+    assert _option(command, "--transition-type") == "grow"
+    assert _option(command, "--transition-step") == "90"
+    assert _option(command, "--transition-duration") == "0.8"
+    assert _option(command, "--transition-fps") == "60"
+    assert _option(command, "--transition-angle") == "45.0"
+    assert _option(command, "--transition-pos") == "center"
+    assert "--invert-y" not in command
+    assert _option(command, "--transition-bezier") == ".54,0,.34,.99"
+    assert _option(command, "--transition-wave") == "20,20"
     state = load_state(state_path)
     assert state.monitors["DP-1"].file == str(image)
     assert state.monitors["DP-1"].pid is None
@@ -88,11 +88,100 @@ def test_set_video_starts_mpvpaper_and_saves_pid(tmp_path: Path) -> None:
 
     assert result.backend == "mpvpaper"
     assert result.pid == 4201
-    assert runner.starts == [
-        ["mpvpaper", "-o", "no-audio loop hwdec=auto", "eDP-1", str(video)]
+    assert runner.starts[0][0:3] == [
+        "mpvpaper",
+        "-o",
+        (
+            "no-config no-audio loop hwdec=auto profile=fast "
+            "video-sync=display-resample interpolation=no scale=bilinear "
+            "cscale=bilinear dscale=bilinear panscan=1.0 osd-level=0 msg-level=all=no"
+        ),
     ]
+    assert runner.starts[0][3:] == ["eDP-1", str(video)]
     state = load_state(state_path)
     assert state.monitors["eDP-1"].pid == 4201
+
+
+def test_set_image_accepts_backend_overrides(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    state_path = tmp_path / "state.json"
+    image = tmp_path / "wallpaper.png"
+    image.write_bytes(b"")
+
+    result = set_wallpaper(
+        image,
+        "DP-1",
+        config=sample_config(tmp_path),
+        backend_override="swww",
+        backend_config_overrides={
+            "transition_type": "wave",
+            "transition_step": 20,
+            "transition_duration": 1.5,
+            "transition_fps": 30,
+            "transition_angle": 120,
+            "transition_pos": "bottom-right",
+            "invert_y": True,
+            "transition_bezier": "0.0,0.0,1.0,1.0",
+            "transition_wave": "32,12",
+        },
+        runner=runner,
+        state_path=state_path,
+    )
+
+    assert result.backend == "swww"
+    command = runner.runs[0]
+    assert command[0:5] == ["swww", "img", str(image), "--outputs", "DP-1"]
+    assert _option(command, "--transition-type") == "wave"
+    assert _option(command, "--transition-step") == "20"
+    assert _option(command, "--transition-duration") == "1.5"
+    assert _option(command, "--transition-fps") == "30"
+    assert _option(command, "--transition-angle") == "120"
+    assert _option(command, "--transition-pos") == "bottom-right"
+    assert "--invert-y" in command
+    assert _option(command, "--transition-bezier") == "0.0,0.0,1.0,1.0"
+    assert _option(command, "--transition-wave") == "32,12"
+
+
+def test_gif_with_video_backend_tracks_process(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    state_path = tmp_path / "state.json"
+    gif = tmp_path / "animated.gif"
+    gif.write_bytes(b"")
+
+    result = set_wallpaper(
+        gif,
+        "DP-1",
+        config=sample_config(tmp_path),
+        backend_override="mpvpaper",
+        backend_config_overrides={"options": "loop no-audio"},
+        runner=runner,
+        state_path=state_path,
+    )
+
+    assert result.backend == "mpvpaper"
+    assert result.pid == 4201
+    assert runner.starts == [["mpvpaper", "-o", "loop no-audio", "DP-1", str(gif)]]
+
+
+def test_rejects_incompatible_backend_override(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    state_path = tmp_path / "state.json"
+    image = tmp_path / "wallpaper.png"
+    image.write_bytes(b"")
+
+    try:
+        set_wallpaper(
+            image,
+            "DP-1",
+            config=sample_config(tmp_path),
+            backend_override="mpvpaper",
+            runner=runner,
+            state_path=state_path,
+        )
+    except Exception as error:
+        assert "cannot handle image wallpapers" in str(error)
+    else:
+        raise AssertionError("expected incompatible backend override to fail")
 
 
 def test_set_all_expands_current_monitors(tmp_path: Path) -> None:
@@ -105,12 +194,35 @@ def test_set_all_expands_current_monitors(tmp_path: Path) -> None:
         image,
         config=sample_config(tmp_path),
         runner=runner,
+        mode="sequential",
         monitor_provider=lambda: [Monitor("DP-1"), Monitor("HDMI-A-1")],
         state_path=state_path,
     )
 
     assert [result.monitor for result in results] == ["DP-1", "HDMI-A-1"]
     assert [command[4] for command in runner.runs] == ["DP-1", "HDMI-A-1"]
+
+
+def test_set_all_images_uses_one_backend_command_for_all_outputs(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    state_path = tmp_path / "state.json"
+    image = tmp_path / "wallpaper.jpg"
+    image.write_bytes(b"")
+    config = sample_config(tmp_path)
+
+    results = set_wallpaper_for_all(
+        image,
+        config=config,
+        runner=runner,
+        monitor_provider=lambda: [Monitor("DP-1"), Monitor("HDMI-A-1")],
+        state_path=state_path,
+    )
+
+    assert [result.monitor for result in results] == ["DP-1", "HDMI-A-1"]
+    assert len(runner.runs) == 1
+    assert _option(runner.runs[0], "--outputs") == "DP-1,HDMI-A-1"
+    state = load_state(state_path)
+    assert sorted(state.monitors) == ["DP-1", "HDMI-A-1"]
 
 
 def test_set_focused_uses_focused_monitor(tmp_path: Path) -> None:

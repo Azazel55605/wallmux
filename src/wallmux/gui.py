@@ -6,6 +6,7 @@ import sys
 import traceback
 from pathlib import Path
 
+from wallmux.backends.routing import compatible_backends
 from wallmux.core.config import load_config, user_config_file, write_config
 from wallmux.core.hooks import hook_log_file
 from wallmux.core.ipc import DaemonUnavailable, send_request
@@ -13,7 +14,7 @@ from wallmux.core.library import WallpaperItem, filter_wallpapers, scan_wallpape
 from wallmux.core.mime import WallpaperType
 from wallmux.core.monitors import list_monitors
 from wallmux.core.thumbnails import ensure_thumbnail
-from wallmux.core.wallpaper import WallmuxError, set_wallpaper
+from wallmux.core.wallpaper import WallmuxError, set_wallpaper, set_wallpaper_for_all
 
 try:
     from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal, Slot
@@ -22,9 +23,11 @@ try:
         QApplication,
         QCheckBox,
         QComboBox,
+        QDoubleSpinBox,
         QFileDialog,
         QFormLayout,
         QFrame,
+        QGroupBox,
         QHBoxLayout,
         QLabel,
         QLineEdit,
@@ -33,6 +36,8 @@ try:
         QMainWindow,
         QMessageBox,
         QPushButton,
+        QScrollArea,
+        QSpinBox,
         QSplitter,
         QStatusBar,
         QStyle,
@@ -66,6 +71,26 @@ TYPE_FILTERS = {
     "Videos": WallpaperType.VIDEO,
 }
 
+ALL_MONITORS = "__all_monitors__"
+IMAGE_BACKENDS = {"awww", "swww"}
+VIDEO_BACKENDS = {"mpvpaper", "gslapper"}
+IMAGE_TRANSITIONS = [
+    "none",
+    "simple",
+    "fade",
+    "left",
+    "right",
+    "top",
+    "bottom",
+    "wipe",
+    "wave",
+    "grow",
+    "center",
+    "any",
+    "outer",
+    "random",
+]
+
 THEME_DEBUG_ARG = "--theme-debug"
 SYSTEM_QT_PLUGIN_PATHS = [
     Path("/usr/lib/qt6/plugins"),
@@ -82,6 +107,7 @@ class ThumbnailSignals(QObject):
 class ThumbnailTask(QRunnable):
     def __init__(self, item: WallpaperItem, size: int) -> None:
         super().__init__()
+        self.setAutoDelete(False)
         self.item = item
         self.size = size
         self.signals = ThumbnailSignals()
@@ -103,6 +129,7 @@ class WallmuxWindow(QMainWindow):
         self.current_folder: Path | None = None
         self.selected_item: WallpaperItem | None = None
         self.pending_thumbnails: set[str] = set()
+        self.thumbnail_tasks: dict[str, ThumbnailTask] = {}
         self.zen_mode = False
         self.thumbnail_size = int(self.config.get("general", {}).get("thumbnail_size", 256))
         self.thread_pool = QThreadPool.globalInstance()
@@ -186,9 +213,10 @@ class WallmuxWindow(QMainWindow):
         panel_layout.addWidget(self.info_label)
 
         form = QFormLayout()
-        self.backend_label = QLabel("-")
+        self.backend_box = QComboBox()
+        self.backend_box.currentTextChanged.connect(self._backend_changed)
         self.monitor_box = QComboBox()
-        form.addRow("Backend", self.backend_label)
+        form.addRow("Backend", self.backend_box)
         form.addRow("Monitor", self.monitor_box)
         panel_layout.addLayout(form)
 
@@ -222,21 +250,35 @@ class WallmuxWindow(QMainWindow):
 
     def _build_settings_tab(self) -> None:
         tab = QWidget()
-        layout = QVBoxLayout(tab)
+        outer = QVBoxLayout(tab)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
 
         self.config_path_label = QLabel(str(user_config_file()))
         self.config_path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(QLabel("Config"))
-        layout.addWidget(self.config_path_label)
+        general_group = QGroupBox("General")
+        general_form = QFormLayout(general_group)
+        general_form.addRow("Config", self.config_path_label)
 
         self.zen_mode_check = QCheckBox("Zen mode")
         self.zen_mode_check.setToolTip("Show only the wallpaper grid.")
         self.zen_mode_check.toggled.connect(self.set_zen_mode)
-        layout.addWidget(self.zen_mode_check)
+        general_form.addRow("", self.zen_mode_check)
+
+        self.all_monitor_mode_box = QComboBox()
+        self.all_monitor_mode_box.addItem("All at the same time", "simultaneous")
+        self.all_monitor_mode_box.addItem("One by one", "sequential")
+        general_form.addRow("All Monitors", self.all_monitor_mode_box)
+        layout.addWidget(general_group)
 
         self.folder_list = QListWidget()
-        layout.addWidget(QLabel("Wallpaper Folders"))
-        layout.addWidget(self.folder_list, 1)
+        folders_group = QGroupBox("Wallpaper Folders")
+        folders_layout = QVBoxLayout(folders_group)
+        folders_layout.addWidget(self.folder_list)
 
         buttons = QHBoxLayout()
         add_button = QPushButton("Add Folder")
@@ -246,20 +288,137 @@ class WallmuxWindow(QMainWindow):
         buttons.addWidget(add_button)
         buttons.addWidget(remove_button)
         buttons.addStretch(1)
-        layout.addLayout(buttons)
+        folders_layout.addLayout(buttons)
+        layout.addWidget(folders_group)
+
+        backend_group = QGroupBox("Backend Defaults")
+        backend_layout = QVBoxLayout(backend_group)
+
+        routing_form = QFormLayout()
+        self.image_backend_default_box = QComboBox()
+        self.image_backend_default_box.addItems(["awww", "swww"])
+        self.gif_backend_default_box = QComboBox()
+        self.gif_backend_default_box.addItems(["awww", "swww", "mpvpaper", "gslapper"])
+        self.video_backend_default_box = QComboBox()
+        self.video_backend_default_box.addItems(["mpvpaper", "gslapper"])
+        routing_form.addRow("Images", self.image_backend_default_box)
+        routing_form.addRow("GIFs", self.gif_backend_default_box)
+        routing_form.addRow("Videos", self.video_backend_default_box)
+        backend_layout.addLayout(routing_form)
+
+        self.awww_command_edit = QLineEdit()
+        self.awww_transition_type_box = self._transition_type_combo()
+        self.awww_transition_step_spin = self._step_spin()
+        self.awww_transition_duration_spin = self._duration_spin()
+        self.awww_transition_fps_spin = self._fps_spin()
+        self.awww_transition_angle_spin = self._angle_spin()
+        self.awww_transition_pos_edit = QLineEdit()
+        self.awww_invert_y_check = QCheckBox("Invert Y")
+        self.awww_transition_bezier_edit = QLineEdit()
+        self.awww_transition_wave_edit = QLineEdit()
+        awww_form = QFormLayout()
+        awww_form.addRow("Command", self.awww_command_edit)
+        awww_form.addRow("Transition", self.awww_transition_type_box)
+        awww_form.addRow("Step", self.awww_transition_step_spin)
+        awww_form.addRow("Duration", self.awww_transition_duration_spin)
+        awww_form.addRow("FPS", self.awww_transition_fps_spin)
+        awww_form.addRow("Angle", self.awww_transition_angle_spin)
+        awww_form.addRow("Position", self.awww_transition_pos_edit)
+        awww_form.addRow("", self.awww_invert_y_check)
+        awww_form.addRow("Bezier", self.awww_transition_bezier_edit)
+        awww_form.addRow("Wave", self.awww_transition_wave_edit)
+        awww_box = QGroupBox("awww")
+        awww_box.setLayout(awww_form)
+        backend_layout.addWidget(awww_box)
+
+        self.swww_command_edit = QLineEdit()
+        self.swww_transition_type_box = self._transition_type_combo()
+        self.swww_transition_step_spin = self._step_spin()
+        self.swww_transition_duration_spin = self._duration_spin()
+        self.swww_transition_fps_spin = self._fps_spin()
+        self.swww_transition_angle_spin = self._angle_spin()
+        self.swww_transition_pos_edit = QLineEdit()
+        self.swww_invert_y_check = QCheckBox("Invert Y")
+        self.swww_transition_bezier_edit = QLineEdit()
+        self.swww_transition_wave_edit = QLineEdit()
+        swww_form = QFormLayout()
+        swww_form.addRow("Command", self.swww_command_edit)
+        swww_form.addRow("Transition", self.swww_transition_type_box)
+        swww_form.addRow("Step", self.swww_transition_step_spin)
+        swww_form.addRow("Duration", self.swww_transition_duration_spin)
+        swww_form.addRow("FPS", self.swww_transition_fps_spin)
+        swww_form.addRow("Angle", self.swww_transition_angle_spin)
+        swww_form.addRow("Position", self.swww_transition_pos_edit)
+        swww_form.addRow("", self.swww_invert_y_check)
+        swww_form.addRow("Bezier", self.swww_transition_bezier_edit)
+        swww_form.addRow("Wave", self.swww_transition_wave_edit)
+        swww_box = QGroupBox("swww")
+        swww_box.setLayout(swww_form)
+        backend_layout.addWidget(swww_box)
+
+        self.mpvpaper_command_edit = QLineEdit()
+        self.mpvpaper_options_edit = QLineEdit()
+        mpvpaper_form = QFormLayout()
+        mpvpaper_form.addRow("Command", self.mpvpaper_command_edit)
+        mpvpaper_form.addRow("Options", self.mpvpaper_options_edit)
+        mpvpaper_box = QGroupBox("mpvpaper")
+        mpvpaper_box.setLayout(mpvpaper_form)
+        backend_layout.addWidget(mpvpaper_box)
+
+        self.gslapper_command_edit = QLineEdit()
+        gslapper_form = QFormLayout()
+        gslapper_form.addRow("Command", self.gslapper_command_edit)
+        gslapper_box = QGroupBox("gSlapper")
+        gslapper_box.setLayout(gslapper_form)
+        backend_layout.addWidget(gslapper_box)
+
+        save_backend_button = QPushButton("Save Backend Defaults")
+        save_backend_button.clicked.connect(self.save_backend_settings)
+        backend_layout.addWidget(save_backend_button)
+        layout.addWidget(backend_group)
 
         self.hook_log_view = QTextEdit()
         self.hook_log_view.setReadOnly(True)
         self.hook_log_view.setMinimumHeight(140)
-        layout.addWidget(QLabel("Hook Log"))
-        layout.addWidget(self.hook_log_view)
+        hooks_group = QGroupBox("Hooks")
+        hooks_layout = QVBoxLayout(hooks_group)
+        hooks_layout.addWidget(self.hook_log_view)
 
         hook_buttons = QHBoxLayout()
         refresh_hooks_button = QPushButton("Refresh Hook Log")
         refresh_hooks_button.clicked.connect(self.refresh_hook_log)
         hook_buttons.addWidget(refresh_hooks_button)
         hook_buttons.addStretch(1)
-        layout.addLayout(hook_buttons)
+        hooks_layout.addLayout(hook_buttons)
+        layout.addWidget(hooks_group)
+
+        transition_form = QFormLayout()
+        self.fade_overlay_check = QCheckBox("Fade overlay")
+        self.screenshot_bridge_check = QCheckBox("Screenshot bridge")
+        self.quickshell_overlay_check = QCheckBox("QuickShell overlay")
+        self.fade_command_edit = QLineEdit()
+        self.screenshot_command_edit = QLineEdit()
+        self.quickshell_command_edit = QLineEdit()
+        self.transition_effect_timeout_spin = QDoubleSpinBox()
+        self.transition_effect_timeout_spin.setRange(0.1, 30.0)
+        self.transition_effect_timeout_spin.setSingleStep(0.5)
+        self.transition_effect_timeout_spin.setDecimals(1)
+
+        transition_form.addRow("", self.fade_overlay_check)
+        transition_form.addRow("Fade Command", self.fade_command_edit)
+        transition_form.addRow("", self.screenshot_bridge_check)
+        transition_form.addRow("Screenshot Command", self.screenshot_command_edit)
+        transition_form.addRow("", self.quickshell_overlay_check)
+        transition_form.addRow("QuickShell Command", self.quickshell_command_edit)
+        transition_form.addRow("Effect Timeout", self.transition_effect_timeout_spin)
+        transition_group = QGroupBox("Transition Effects")
+        transition_group.setLayout(transition_form)
+        layout.addWidget(transition_group)
+
+        save_transitions_button = QPushButton("Save Transition Effects")
+        save_transitions_button.clicked.connect(self.save_transition_settings)
+        layout.addWidget(save_transitions_button)
+        layout.addStretch(1)
 
         self.tabs.addTab(tab, "Settings")
         self.refresh_settings()
@@ -276,12 +435,10 @@ class WallmuxWindow(QMainWindow):
 
     def _load_monitors(self) -> None:
         self.monitor_box.clear()
+        self.monitor_box.addItem("All monitors", ALL_MONITORS)
         monitors = list_monitors()
-        if monitors:
-            for monitor in monitors:
-                self.monitor_box.addItem(monitor.name)
-        else:
-            self.monitor_box.addItem("all")
+        for monitor in monitors:
+            self.monitor_box.addItem(monitor.name, monitor.name)
 
     def choose_folder(self) -> None:
         selected = QFileDialog.getExistingDirectory(self, "Open Wallpaper Folder")
@@ -298,6 +455,10 @@ class WallmuxWindow(QMainWindow):
         self.populate_grid()
         self.status.showMessage(f"{len(self.items)} wallpapers in {folder}", 5000)
         self.grid.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def closeEvent(self, event) -> None:
+        self.thread_pool.waitForDone(1000)
+        super().closeEvent(event)
 
     def refresh_library(self) -> None:
         if self.current_folder is not None:
@@ -332,7 +493,7 @@ class WallmuxWindow(QMainWindow):
             return
 
         self.selected_item = selected[0].data(Qt.ItemDataRole.UserRole)
-        self.backend_label.setText(self.selected_item.backend)
+        self._populate_backend_box(self.selected_item)
         self.info_label.setText(
             f"{self.selected_item.path.name}\n"
             f"{self.selected_item.wallpaper_type.value}\n"
@@ -346,33 +507,83 @@ class WallmuxWindow(QMainWindow):
         if self.selected_item is None:
             return
 
-        monitor = self.monitor_box.currentText()
+        monitor = self.monitor_box.currentData()
+        backend = self.backend_box.currentText()
+        all_monitor_mode = self.all_monitor_mode_box.currentData()
         request = {
             "command": "set",
             "file": str(self.selected_item.path),
-            "monitor": monitor,
+            "backend": backend,
         }
+        if monitor == ALL_MONITORS:
+            request["all"] = True
+            request["all_monitor_mode"] = all_monitor_mode
+        else:
+            request["monitor"] = monitor or self.monitor_box.currentText()
+
         try:
             response = send_request(request)
             if not response.get("ok"):
                 raise WallmuxError(response.get("error", "unknown daemon error"))
-            result = response["results"][0]
-            self.status.showMessage(
-                f"Set {Path(result['file']).name} on {result['monitor']} via {result['backend']}",
-                6000,
-            )
+            self._show_set_results(response["results"])
         except DaemonUnavailable:
             try:
-                result = set_wallpaper(self.selected_item.path, monitor, config=self.config)
+                if monitor == ALL_MONITORS:
+                    results = set_wallpaper_for_all(
+                        self.selected_item.path,
+                        config=self.config,
+                        backend_override=backend,
+                        mode=all_monitor_mode,
+                    )
+                else:
+                    result = set_wallpaper(
+                        self.selected_item.path,
+                        monitor or self.monitor_box.currentText(),
+                        config=self.config,
+                        backend_override=backend,
+                    )
+                    results = [result]
             except (ValueError, WallmuxError) as error:
                 QMessageBox.critical(self, "Wallmux", str(error))
                 return
-            self.status.showMessage(
-                f"Set {result.file.name} on {result.monitor} via {result.backend}",
-                6000,
+            self._show_set_results(
+                [
+                    {
+                        "file": str(result.file),
+                        "monitor": result.monitor,
+                        "backend": result.backend,
+                    }
+                    for result in results
+                ]
             )
         except WallmuxError as error:
             QMessageBox.critical(self, "Wallmux", str(error))
+
+    def _populate_backend_box(self, item: WallpaperItem) -> None:
+        current = item.backend
+        options = compatible_backends(item.wallpaper_type)
+        self.backend_box.blockSignals(True)
+        self.backend_box.clear()
+        self.backend_box.addItems(options)
+        if current in options:
+            self.backend_box.setCurrentText(current)
+        self.backend_box.blockSignals(False)
+
+    def _backend_changed(self, backend: str) -> None:
+        self.status.showMessage(f"{backend} will use the saved backend defaults", 3000)
+
+    def _show_set_results(self, results: list[dict]) -> None:
+        if not results:
+            return
+        first = results[0]
+        if len(results) == 1:
+            message = (
+                f"Set {Path(first['file']).name} on {first['monitor']} "
+                f"via {first['backend']}"
+            )
+        else:
+            message = f"Set {Path(first['file']).name} on {len(results)} monitors"
+        self.status.showMessage(message, 6000)
 
     def add_config_folder(self) -> None:
         selected = QFileDialog.getExistingDirectory(self, "Add Wallpaper Folder")
@@ -397,10 +608,182 @@ class WallmuxWindow(QMainWindow):
         write_config(self.config, user_config_file())
         self.refresh_settings()
 
+    def save_backend_settings(self) -> None:
+        self.config.setdefault("general", {})["all_monitor_mode"] = (
+            self.all_monitor_mode_box.currentData()
+        )
+        self.config["backend_rules"] = {
+            "image": self.image_backend_default_box.currentText(),
+            "gif": self.gif_backend_default_box.currentText(),
+            "video": self.video_backend_default_box.currentText(),
+        }
+        self.config["backends"] = {
+            "awww": {
+                "command": self.awww_command_edit.text(),
+                "transition_type": self.awww_transition_type_box.currentText(),
+                "transition_step": self.awww_transition_step_spin.value(),
+                "transition_duration": self.awww_transition_duration_spin.value(),
+                "transition_fps": self.awww_transition_fps_spin.value(),
+                "transition_angle": self.awww_transition_angle_spin.value(),
+                "transition_pos": self.awww_transition_pos_edit.text(),
+                "invert_y": self.awww_invert_y_check.isChecked(),
+                "transition_bezier": self.awww_transition_bezier_edit.text(),
+                "transition_wave": self.awww_transition_wave_edit.text(),
+            },
+            "swww": {
+                "command": self.swww_command_edit.text(),
+                "transition_type": self.swww_transition_type_box.currentText(),
+                "transition_step": self.swww_transition_step_spin.value(),
+                "transition_duration": self.swww_transition_duration_spin.value(),
+                "transition_fps": self.swww_transition_fps_spin.value(),
+                "transition_angle": self.swww_transition_angle_spin.value(),
+                "transition_pos": self.swww_transition_pos_edit.text(),
+                "invert_y": self.swww_invert_y_check.isChecked(),
+                "transition_bezier": self.swww_transition_bezier_edit.text(),
+                "transition_wave": self.swww_transition_wave_edit.text(),
+            },
+            "mpvpaper": {
+                "command": self.mpvpaper_command_edit.text(),
+                "options": self.mpvpaper_options_edit.text(),
+            },
+            "gslapper": {
+                "command": self.gslapper_command_edit.text(),
+            },
+        }
+        write_config(self.config, user_config_file())
+        try:
+            send_request({"command": "reload"})
+        except DaemonUnavailable:
+            pass
+        if self.current_folder is not None:
+            self.load_folder(self.current_folder)
+        self.status.showMessage("Backend defaults saved", 5000)
+
     def refresh_settings(self) -> None:
         self.folder_list.clear()
         for folder in self.config.get("general", {}).get("wallpaper_dirs", []):
             self.folder_list.addItem(folder)
+        self.refresh_backend_settings()
+        self.refresh_transition_settings()
+
+    def refresh_backend_settings(self) -> None:
+        general = self.config.get("general", {})
+        backend_rules = self.config.get("backend_rules", {})
+        backends = self.config.get("backends", {})
+
+        self._set_combo_data(
+            self.all_monitor_mode_box,
+            str(general.get("all_monitor_mode", "simultaneous")),
+        )
+        self.image_backend_default_box.setCurrentText(str(backend_rules.get("image", "awww")))
+        self.gif_backend_default_box.setCurrentText(str(backend_rules.get("gif", "awww")))
+        self.video_backend_default_box.setCurrentText(str(backend_rules.get("video", "mpvpaper")))
+
+        self._load_image_backend_settings("awww", backends.get("awww", {}))
+        self._load_image_backend_settings("swww", backends.get("swww", {}))
+        mpvpaper = backends.get("mpvpaper", {})
+        self.mpvpaper_command_edit.setText(str(mpvpaper.get("command", "mpvpaper")))
+        self.mpvpaper_options_edit.setText(str(mpvpaper.get("options", "")))
+        gslapper = backends.get("gslapper", {})
+        self.gslapper_command_edit.setText(str(gslapper.get("command", "gslapper")))
+
+    def _load_image_backend_settings(self, backend: str, backend_config: dict) -> None:
+        if backend == "awww":
+            command = self.awww_command_edit
+            transition_type = self.awww_transition_type_box
+            step = self.awww_transition_step_spin
+            duration = self.awww_transition_duration_spin
+            fps = self.awww_transition_fps_spin
+            angle = self.awww_transition_angle_spin
+            position = self.awww_transition_pos_edit
+            invert_y = self.awww_invert_y_check
+            bezier = self.awww_transition_bezier_edit
+            wave = self.awww_transition_wave_edit
+        else:
+            command = self.swww_command_edit
+            transition_type = self.swww_transition_type_box
+            step = self.swww_transition_step_spin
+            duration = self.swww_transition_duration_spin
+            fps = self.swww_transition_fps_spin
+            angle = self.swww_transition_angle_spin
+            position = self.swww_transition_pos_edit
+            invert_y = self.swww_invert_y_check
+            bezier = self.swww_transition_bezier_edit
+            wave = self.swww_transition_wave_edit
+
+        command.setText(str(backend_config.get("command", backend)))
+        transition_type.setCurrentText(str(backend_config.get("transition_type", "grow")))
+        step.setValue(int(backend_config.get("transition_step", 90)))
+        duration.setValue(float(backend_config.get("transition_duration", 0.8)))
+        fps.setValue(int(backend_config.get("transition_fps", 60)))
+        angle.setValue(float(backend_config.get("transition_angle", 45.0)))
+        position.setText(str(backend_config.get("transition_pos", "center")))
+        invert_y.setChecked(bool(backend_config.get("invert_y", False)))
+        bezier.setText(str(backend_config.get("transition_bezier", ".54,0,.34,.99")))
+        wave.setText(str(backend_config.get("transition_wave", "20,20")))
+
+    def _transition_type_combo(self) -> QComboBox:
+        combo = QComboBox()
+        combo.setEditable(True)
+        combo.addItems(IMAGE_TRANSITIONS)
+        return combo
+
+    def _step_spin(self) -> QSpinBox:
+        spin = QSpinBox()
+        spin.setRange(0, 255)
+        return spin
+
+    def _duration_spin(self) -> QDoubleSpinBox:
+        spin = QDoubleSpinBox()
+        spin.setRange(0.0, 20.0)
+        spin.setSingleStep(0.1)
+        spin.setDecimals(2)
+        return spin
+
+    def _fps_spin(self) -> QSpinBox:
+        spin = QSpinBox()
+        spin.setRange(1, 240)
+        return spin
+
+    def _angle_spin(self) -> QDoubleSpinBox:
+        spin = QDoubleSpinBox()
+        spin.setRange(0.0, 360.0)
+        spin.setSingleStep(5.0)
+        spin.setDecimals(1)
+        return spin
+
+    def _set_combo_data(self, combo: QComboBox, value: str) -> None:
+        index = combo.findData(value)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+
+    def refresh_transition_settings(self) -> None:
+        effects = self.config.get("transitions", {}).get("effects", {})
+        self.fade_overlay_check.setChecked(bool(effects.get("fade_overlay", False)))
+        self.fade_command_edit.setText(str(effects.get("fade_command", "")))
+        self.screenshot_bridge_check.setChecked(bool(effects.get("screenshot_bridge", False)))
+        self.screenshot_command_edit.setText(str(effects.get("screenshot_command", "")))
+        self.quickshell_overlay_check.setChecked(bool(effects.get("quickshell_overlay", False)))
+        self.quickshell_command_edit.setText(str(effects.get("quickshell_command", "")))
+        self.transition_effect_timeout_spin.setValue(float(effects.get("timeout_seconds", 2.0)))
+
+    def save_transition_settings(self) -> None:
+        transitions = self.config.setdefault("transitions", {})
+        transitions["effects"] = {
+            "fade_overlay": self.fade_overlay_check.isChecked(),
+            "fade_command": self.fade_command_edit.text(),
+            "screenshot_bridge": self.screenshot_bridge_check.isChecked(),
+            "screenshot_command": self.screenshot_command_edit.text(),
+            "quickshell_overlay": self.quickshell_overlay_check.isChecked(),
+            "quickshell_command": self.quickshell_command_edit.text(),
+            "timeout_seconds": self.transition_effect_timeout_spin.value(),
+        }
+        write_config(self.config, user_config_file())
+        try:
+            send_request({"command": "reload"})
+        except DaemonUnavailable:
+            pass
+        self.status.showMessage("Transition effects saved", 5000)
 
     def refresh_hook_log(self) -> None:
         log_file = hook_log_file()
@@ -439,6 +822,7 @@ class WallmuxWindow(QMainWindow):
 
         self.pending_thumbnails.add(key)
         task = ThumbnailTask(item, self.thumbnail_size)
+        self.thumbnail_tasks[key] = task
         task.signals.loaded.connect(self.apply_thumbnail)
         task.signals.failed.connect(self.finish_thumbnail)
         self.thread_pool.start(task)
@@ -461,6 +845,7 @@ class WallmuxWindow(QMainWindow):
 
     def finish_thumbnail(self, source_path: str) -> None:
         self.pending_thumbnails.discard(source_path)
+        self.thumbnail_tasks.pop(source_path, None)
 
     def _set_preview_pixmap(self, pixmap: QPixmap) -> None:
         self.preview.setPixmap(

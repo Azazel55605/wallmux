@@ -8,9 +8,9 @@ It does not render wallpapers directly. Instead, it routes wallpapers to establi
 - Videos: `mpvpaper` first, with `gSlapper` support planned.
 - Hooks: `pywal`, `matugen`, QuickShell reloads, and other desktop automation.
 
-## Early Status
+## Status
 
-This repository is in Phase 0: project structure, planning, and a thin CLI prototype.
+Wallmux has the core CLI, daemon, hooks, GUI v1, and state-aware transition switching in place.
 
 The first useful MVP will:
 
@@ -50,7 +50,7 @@ wallmuxctl --direct set ~/Wallpapers/foo.png --monitor DP-1
 wallmux-gui
 ```
 
-The GUI opens a wallpaper browser with folder selection, search, media-type filtering, thumbnails, monitor selection, backend preview, and a settings tab for wallpaper folders.
+The GUI opens a wallpaper browser with folder selection, search, media-type filtering, thumbnails, monitor selection, backend selection, and a settings tab for global backend defaults, wallpaper folders, hooks, and transition-effect helpers.
 
 GUI keyboard controls:
 
@@ -58,6 +58,21 @@ GUI keyboard controls:
 - `Enter` / `Return`: set the selected wallpaper
 - `F11` / `Ctrl+Z`: toggle zen mode
 - `Escape`: exit zen mode
+
+The monitor selector includes an `All monitors` target. Backend controls are filtered by wallpaper type:
+
+- Images: `awww`, `swww`
+- GIFs: `awww`, `swww`, `mpvpaper`, `gslapper`
+- Videos: `mpvpaper`, `gslapper`
+
+Backend options are global settings. Update them under `Settings -> Backend Defaults`; the browser uses the saved defaults whenever it sets a wallpaper.
+
+`awww` and `swww` expose the full image transition set:
+
+- `none`, `simple`, `fade`, `left`, `right`, `top`, `bottom`
+- `wipe`, `wave`, `grow`, `center`, `any`, `outer`, `random`
+
+The global backend defaults also include transition step, duration, FPS, angle, position, invert-y, bezier curve, and wave dimensions.
 
 The GUI requests a dialog-style Qt window so Hyprland can treat it like a floating manager window by default.
 
@@ -109,6 +124,37 @@ Video cleanup is controlled by:
 video_stop_timeout_seconds = 2.0
 kill_video_on_timeout = true
 ```
+
+The `All monitors` target can apply wallpapers either together or one by one:
+
+```toml
+[general]
+all_monitor_mode = "simultaneous" # or "sequential"
+```
+
+For `awww` and `swww`, simultaneous mode sends one command with all outputs joined, so `any` and `random` transitions choose one shared effect across monitors.
+
+The default `mpvpaper` options ignore the user's mpv config, suppress mpv status output, crop/fill mixed aspect-ratio monitors, and use cheaper scaling for large videos:
+
+```toml
+[backends.mpvpaper]
+options = "no-config no-audio loop hwdec=auto profile=fast video-sync=display-resample interpolation=no scale=bilinear cscale=bilinear dscale=bilinear panscan=1.0 osd-level=0 msg-level=all=no"
+```
+
+Optional transition effect helpers can call external commands for fade overlays, screenshot bridges, or QuickShell integration. They are disabled by default:
+
+```toml
+[transitions.effects]
+fade_overlay = false
+fade_command = ""
+screenshot_bridge = false
+screenshot_command = ""
+quickshell_overlay = false
+quickshell_command = ""
+timeout_seconds = 2.0
+```
+
+Supported transition placeholders are `{monitor}`, `{from_file}`, `{to_file}`, `{from_backend}`, `{to_backend}`, `{transition}`, and `{stage}`.
 
 ## Development
 

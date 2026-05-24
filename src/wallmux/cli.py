@@ -39,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
     target.add_argument("--monitor")
     target.add_argument("--all", action="store_true")
     target.add_argument("--focused-monitor", action="store_true")
+    set_cmd.add_argument(
+        "--all-mode",
+        choices=["simultaneous", "sequential"],
+        help="How to apply --all across monitors.",
+    )
 
     restore = subparsers.add_parser("restore", help="Restore saved wallpaper state.")
     restore.set_defaults(command="restore")
@@ -75,6 +80,8 @@ def main(argv: list[str] | None = None) -> int:
             request = {"command": "set", "file": str(args.file)}
             if args.all:
                 request["all"] = True
+                if args.all_mode:
+                    request["all_monitor_mode"] = args.all_mode
             elif args.focused_monitor:
                 request["focused_monitor"] = True
             else:
@@ -85,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
 
         try:
             if args.all:
-                results = set_wallpaper_for_all(args.file)
+                results = set_wallpaper_for_all(args.file, mode=args.all_mode)
             elif args.focused_monitor:
                 results = [set_wallpaper_for_focused(args.file)]
             else:

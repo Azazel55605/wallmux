@@ -10,12 +10,12 @@ Status legend:
 
 ## Current Snapshot
 
-- Current phase: Phase 3 complete / ready for Phase 4
+- Current phase: Phase 5 complete / ready for Phase 6 packaging polish
 - Repository scaffold: done
 - CLI prototype: complete for Phase 1
 - Daemon: complete for Phase 2
 - GUI: complete for Phase 3
-- Last verified: `pytest` and `ruff check .` passing
+- Last verified: `pytest`, `ruff check .`, GUI offscreen smoke check, build, and `twine check` passing
 
 ## Phase 0: Repository Setup
 
@@ -117,9 +117,9 @@ Goal: improve cross-backend switching after the MVP is reliable.
 - [x] Clean video -> video replacement
 - [x] Clean image -> video switching
 - [x] Clean video -> image switching
-- [ ] Optional fade overlay
-- [ ] Optional screenshot bridge
-- [ ] Optional QuickShell overlay integration
+- [x] Optional fade overlay
+- [x] Optional screenshot bridge
+- [x] Optional QuickShell overlay integration
 
 ## Phase 6: Packaging
 
@@ -149,8 +149,8 @@ Goal: easy install on Arch.
 - [x] Allow choosing a monitor
 - [x] Save current wallpaper state
 - [x] Restore current wallpaper state by executing backend commands
-- [ ] Provide a basic PySide6 thumbnail grid
-- [ ] Run optional `after_set` hooks
+- [x] Provide a basic PySide6 thumbnail grid
+- [x] Run optional `after_set` hooks
 
 ## Verification Log
 
@@ -176,3 +176,11 @@ Record notable checks here as the project moves.
 - 2026-05-21: Added GUI background thumbnail generation, Qt theme/plugin discovery, zen mode, keyboard navigation, and a dialog-style floating hint.
 - 2026-05-21: Finished Phase 4 hooks with before/after stages, placeholders, timeouts, failure logging, video thumbnail color source, per-backend hook enable flags, and GUI hook log viewer.
 - 2026-05-21: Finished Phase 5 simple transition polish with transition classification, stale PID cleanup, configurable video stop timeout, SIGKILL fallback, and tests for image/video switch paths.
+- 2026-05-24: Added per-set backend controls in the GUI, an all-monitors target, daemon/core backend overrides, and opt-in external transition effect commands for fade, screenshot bridge, and QuickShell overlay helpers.
+- 2026-05-24: `pytest` passed, 47 tests.
+- 2026-05-24: `ruff check .` passed.
+- 2026-05-24: GUI offscreen smoke check passed.
+- 2026-05-24: Reworked Settings into grouped sections, moved backend options to persistent global defaults, added simultaneous/sequential all-monitor mode, quiet/crop/fill mpvpaper defaults, and migration for the old mpvpaper default options.
+- 2026-05-24: `pytest` passed, 48 tests.
+- 2026-05-24: Added full `awww`/`swww` transition defaults for type, step, duration, FPS, angle, position, invert-y, bezier, and wave dimensions.
+- 2026-05-24: Changed simultaneous all-monitor image sets to issue one unified `awww`/`swww` command with comma-separated outputs, keeping random/any transitions consistent across monitors.

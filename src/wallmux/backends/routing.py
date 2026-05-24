@@ -16,6 +16,12 @@ DEFAULT_BACKENDS = {
     WallpaperType.VIDEO: "mpvpaper",
 }
 
+COMPATIBLE_BACKENDS = {
+    WallpaperType.IMAGE: ("awww", "swww"),
+    WallpaperType.GIF: ("awww", "swww", "mpvpaper", "gslapper"),
+    WallpaperType.VIDEO: ("mpvpaper", "gslapper"),
+}
+
 
 def route_wallpaper(
     wallpaper_type: WallpaperType,
@@ -33,8 +39,14 @@ def route_wallpaper(
     return DEFAULT_BACKENDS[wallpaper_type]
 
 
-def build_backend(name: str, config: dict[str, Any] | None = None):
-    backend_config = (config or {}).get("backends", {}).get(name, {})
+def build_backend(
+    name: str,
+    config: dict[str, Any] | None = None,
+    overrides: dict[str, Any] | None = None,
+):
+    backend_config = dict((config or {}).get("backends", {}).get(name, {}))
+    if overrides:
+        backend_config.update(overrides)
 
     if name == "awww":
         return AwwwBackend(**backend_config)
@@ -46,3 +58,9 @@ def build_backend(name: str, config: dict[str, Any] | None = None):
         return GslapperBackend(**backend_config)
 
     raise ValueError(f"unknown backend: {name}")
+
+
+def compatible_backends(wallpaper_type: WallpaperType) -> tuple[str, ...]:
+    if wallpaper_type is WallpaperType.UNKNOWN:
+        return ()
+    return COMPATIBLE_BACKENDS.get(wallpaper_type, ())

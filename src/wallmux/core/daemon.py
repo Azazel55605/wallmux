@@ -114,10 +114,15 @@ class WallmuxDaemon:
     def _handle_set(self, request: dict[str, Any]) -> dict[str, Any]:
         self.reload_config()
         file = Path(request["file"])
+        backend_override = request.get("backend")
+        backend_config_overrides = request.get("backend_config")
         if request.get("all"):
             results = set_wallpaper_for_all(
                 file,
                 config=self.config,
+                backend_override=backend_override,
+                backend_config_overrides=backend_config_overrides,
+                mode=request.get("all_monitor_mode"),
                 runner=self.runner,
                 state_path=self.state_path,
             )
@@ -126,6 +131,8 @@ class WallmuxDaemon:
                 set_wallpaper_for_focused(
                     file,
                     config=self.config,
+                    backend_override=backend_override,
+                    backend_config_overrides=backend_config_overrides,
                     runner=self.runner,
                     state_path=self.state_path,
                 )
@@ -136,6 +143,8 @@ class WallmuxDaemon:
                     file,
                     request["monitor"],
                     config=self.config,
+                    backend_override=backend_override,
+                    backend_config_overrides=backend_config_overrides,
                     runner=self.runner,
                     state_path=self.state_path,
                 )

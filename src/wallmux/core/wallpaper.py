@@ -3,18 +3,24 @@
 from __future__ import annotations
 
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
-from wallmux.backends.routing import build_backend, route_wallpaper
+from wallmux.backends.routing import build_backend, compatible_backends, route_wallpaper
 from wallmux.core.config import load_config
 from wallmux.core.hooks import HookContext, run_hook_stage
 from wallmux.core.mime import WallpaperType, detect_wallpaper_type
 from wallmux.core.monitors import Monitor, get_focused_monitor, list_monitors
 from wallmux.core.process import pid_is_alive, terminate_pid
 from wallmux.core.state import WallpaperEntry, load_state, save_state
+from wallmux.core.transition_effects import TransitionContext, run_transition_stage
 from wallmux.core.transitions import TransitionKind, plan_transition
+
+STATE_LOCK = threading.Lock()
+IMAGE_BACKENDS = {"awww", "swww"}
 
 
 class WallmuxError(RuntimeError):
@@ -38,7 +44,11 @@ class SubprocessCommandRunner:
 
     def start(self, command: list[str]) -> int:
         try:
-            process = subprocess.Popen(command)
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         except FileNotFoundError as error:
             raise WallmuxError(f"backend command not found: {command[0]}") from error
         return process.pid
@@ -60,6 +70,8 @@ def set_wallpaper(
     monitor: str,
     *,
     config: dict | None = None,
+    backend_override: str | None = None,
+    backend_config_overrides: dict[str, Any] | None = None,
     runner: CommandRunner | None = None,
     state_path: Path | None = None,
 ) -> SetResult:
@@ -67,8 +79,20 @@ def set_wallpaper(
     runner = runner or SubprocessCommandRunner()
     resolved_file = file.expanduser().resolve()
     wallpaper_type = detect_wallpaper_type(resolved_file)
-    backend_name = route_wallpaper(wallpaper_type, config.get("backend_rules", {}))
-    backend = build_backend(backend_name, config)
+    backend_name = backend_override or route_wallpaper(
+        wallpaper_type,
+        config.get("backend_rules", {}),
+    )
+    if backend_override and backend_override not in compatible_backends(wallpaper_type):
+        raise WallmuxError(
+            f"{backend_override} cannot handle {wallpaper_type.value} wallpapers"
+        )
+    if backend_config_overrides is not None and not isinstance(
+        backend_config_overrides,
+        dict,
+    ):
+        raise WallmuxError("backend_config must be an object")
+    backend = build_backend(backend_name, config, backend_config_overrides)
     command = backend.build_set_command(resolved_file, monitor)
     hook_context = HookContext(
         file=resolved_file,
@@ -79,11 +103,22 @@ def set_wallpaper(
 
     run_hook_stage("before_set", config, hook_context)
 
-    state = load_state(state_path)
-    previous = state.monitors.get(monitor)
-    transition = plan_transition(previous, wallpaper_type)
-    if previous and previous.pid and not pid_is_alive(previous.pid):
-        previous.pid = None
+    with STATE_LOCK:
+        state = load_state(state_path)
+        previous = state.monitors.get(monitor)
+        transition = plan_transition(previous, wallpaper_type, backend_name)
+        if previous and previous.pid and not pid_is_alive(previous.pid):
+            previous.pid = None
+            save_state(state, state_path)
+
+    transition_context = TransitionContext(
+        monitor=monitor,
+        to_file=resolved_file,
+        to_backend=backend_name,
+        transition=transition.kind,
+        previous=previous,
+    )
+    run_transition_stage("before", config, transition_context)
 
     if previous and previous.pid and transition.stop_previous_video:
         transitions_config = config.get("transitions", {})
@@ -94,14 +129,17 @@ def set_wallpaper(
         )
         previous.pid = None
 
-    pid = _execute(command, wallpaper_type, runner)
-    state.monitors[monitor] = WallpaperEntry(
-        file=str(resolved_file),
-        backend=backend_name,
-        wallpaper_type=wallpaper_type.value,
-        pid=pid,
-    )
-    save_state(state, state_path)
+    pid = _execute(command, backend_name, wallpaper_type, runner)
+    with STATE_LOCK:
+        state = load_state(state_path)
+        state.monitors[monitor] = WallpaperEntry(
+            file=str(resolved_file),
+            backend=backend_name,
+            wallpaper_type=wallpaper_type.value,
+            pid=pid,
+        )
+        save_state(state, state_path)
+    run_transition_stage("after", config, transition_context)
     run_hook_stage("after_set", config, hook_context)
 
     return SetResult(
@@ -119,6 +157,9 @@ def set_wallpaper_for_all(
     file: Path,
     *,
     config: dict | None = None,
+    backend_override: str | None = None,
+    backend_config_overrides: dict[str, Any] | None = None,
+    mode: str | None = None,
     runner: CommandRunner | None = None,
     monitor_provider=list_monitors,
     state_path: Path | None = None,
@@ -127,22 +168,67 @@ def set_wallpaper_for_all(
     if not monitors:
         raise WallmuxError("no Hyprland monitors found")
 
-    return [
-        set_wallpaper(
+    config = config or load_config()
+    monitor_names = [_monitor_name(monitor) for monitor in monitors]
+    all_monitor_mode = mode or config.get("general", {}).get(
+        "all_monitor_mode",
+        "simultaneous",
+    )
+    if all_monitor_mode == "simultaneous" and _can_set_all_outputs_together(
+        file,
+        config,
+        backend_override,
+    ):
+        return _set_image_wallpaper_for_all_outputs(
             file,
-            _monitor_name(monitor),
+            monitor_names,
             config=config,
+            backend_override=backend_override,
+            backend_config_overrides=backend_config_overrides,
             runner=runner,
             state_path=state_path,
         )
-        for monitor in monitors
-    ]
+
+    if all_monitor_mode == "sequential":
+        return [
+            set_wallpaper(
+                file,
+                monitor,
+                config=config,
+                backend_override=backend_override,
+                backend_config_overrides=backend_config_overrides,
+                runner=runner,
+                state_path=state_path,
+            )
+            for monitor in monitor_names
+        ]
+
+    if all_monitor_mode != "simultaneous":
+        raise WallmuxError(f"unknown all monitor mode: {all_monitor_mode}")
+
+    with ThreadPoolExecutor(max_workers=len(monitor_names)) as executor:
+        futures = [
+            executor.submit(
+                set_wallpaper,
+                file,
+                monitor,
+                config=config,
+                backend_override=backend_override,
+                backend_config_overrides=backend_config_overrides,
+                runner=runner,
+                state_path=state_path,
+            )
+            for monitor in monitor_names
+        ]
+        return [future.result() for future in futures]
 
 
 def set_wallpaper_for_focused(
     file: Path,
     *,
     config: dict | None = None,
+    backend_override: str | None = None,
+    backend_config_overrides: dict[str, Any] | None = None,
     runner: CommandRunner | None = None,
     monitor_provider=list_monitors,
     state_path: Path | None = None,
@@ -155,6 +241,8 @@ def set_wallpaper_for_focused(
         file,
         monitor.name,
         config=config,
+        backend_override=backend_override,
+        backend_config_overrides=backend_config_overrides,
         runner=runner,
         state_path=state_path,
     )
@@ -192,14 +280,110 @@ def restore_wallpapers(
 
 def _execute(
     command: list[str],
+    backend_name: str,
     wallpaper_type: WallpaperType,
     runner: CommandRunner,
 ) -> int | None:
-    if wallpaper_type is WallpaperType.VIDEO:
+    if wallpaper_type is WallpaperType.VIDEO or backend_name in {"mpvpaper", "gslapper"}:
         return runner.start(command)
 
     runner.run(command)
     return None
+
+
+def _can_set_all_outputs_together(
+    file: Path,
+    config: dict,
+    backend_override: str | None,
+) -> bool:
+    wallpaper_type = detect_wallpaper_type(file.expanduser().resolve())
+    backend_name = backend_override or route_wallpaper(
+        wallpaper_type,
+        config.get("backend_rules", {}),
+    )
+    return backend_name in IMAGE_BACKENDS and wallpaper_type is not WallpaperType.VIDEO
+
+
+def _set_image_wallpaper_for_all_outputs(
+    file: Path,
+    monitors: list[str],
+    *,
+    config: dict,
+    backend_override: str | None,
+    backend_config_overrides: dict[str, Any] | None,
+    runner: CommandRunner | None,
+    state_path: Path | None,
+) -> list[SetResult]:
+    runner = runner or SubprocessCommandRunner()
+    resolved_file = file.expanduser().resolve()
+    wallpaper_type = detect_wallpaper_type(resolved_file)
+    backend_name = backend_override or route_wallpaper(
+        wallpaper_type,
+        config.get("backend_rules", {}),
+    )
+    if backend_override and backend_override not in compatible_backends(wallpaper_type):
+        raise WallmuxError(
+            f"{backend_override} cannot handle {wallpaper_type.value} wallpapers"
+        )
+    backend = build_backend(backend_name, config, backend_config_overrides)
+    joined_outputs = ",".join(monitors)
+    command = backend.build_set_command(resolved_file, joined_outputs)
+
+    transitions: dict[str, TransitionKind] = {}
+    pids_to_stop: list[int] = []
+    with STATE_LOCK:
+        state = load_state(state_path)
+        for monitor in monitors:
+            previous = state.monitors.get(monitor)
+            transition = plan_transition(previous, wallpaper_type, backend_name)
+            transitions[monitor] = transition.kind
+            if previous and previous.pid and not pid_is_alive(previous.pid):
+                previous.pid = None
+            if previous and previous.pid and transition.stop_previous_video:
+                pids_to_stop.append(previous.pid)
+                previous.pid = None
+        save_state(state, state_path)
+
+    transitions_config = config.get("transitions", {})
+    for pid in pids_to_stop:
+        terminate_pid(
+            pid,
+            float(transitions_config.get("video_stop_timeout_seconds", 2.0)),
+            kill_on_timeout=bool(transitions_config.get("kill_video_on_timeout", True)),
+        )
+
+    hook_context = HookContext(
+        file=resolved_file,
+        monitor=joined_outputs,
+        backend=backend_name,
+        wallpaper_type=wallpaper_type,
+    )
+    run_hook_stage("before_set", config, hook_context)
+    runner.run(command)
+
+    with STATE_LOCK:
+        state = load_state(state_path)
+        for monitor in monitors:
+            state.monitors[monitor] = WallpaperEntry(
+                file=str(resolved_file),
+                backend=backend_name,
+                wallpaper_type=wallpaper_type.value,
+                pid=None,
+            )
+        save_state(state, state_path)
+
+    run_hook_stage("after_set", config, hook_context)
+    return [
+        SetResult(
+            monitor=monitor,
+            file=resolved_file,
+            backend=backend_name,
+            wallpaper_type=wallpaper_type,
+            command=command,
+            transition=transitions.get(monitor, TransitionKind.FIRST_SET),
+        )
+        for monitor in monitors
+    ]
 
 
 def _monitor_name(monitor: Monitor | str) -> str:
