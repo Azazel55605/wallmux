@@ -120,7 +120,19 @@ def set_wallpaper(
     )
     run_transition_stage("before", config, transition_context)
 
-    if previous and previous.pid and transition.stop_previous_video:
+    stop_video_after_image_set = _should_stop_video_after_image_set(
+        config,
+        transition.kind,
+        backend_name,
+        previous.pid if previous else None,
+    )
+
+    if (
+        previous
+        and previous.pid
+        and transition.stop_previous_video
+        and not stop_video_after_image_set
+    ):
         transitions_config = config.get("transitions", {})
         terminate_pid(
             previous.pid,
@@ -130,6 +142,14 @@ def set_wallpaper(
         previous.pid = None
 
     pid = _execute(command, backend_name, wallpaper_type, runner)
+    if previous and previous.pid and stop_video_after_image_set:
+        transitions_config = config.get("transitions", {})
+        terminate_pid(
+            previous.pid,
+            float(transitions_config.get("video_stop_timeout_seconds", 2.0)),
+            kill_on_timeout=bool(transitions_config.get("kill_video_on_timeout", True)),
+        )
+        previous.pid = None
     with STATE_LOCK:
         state = load_state(state_path)
         state.monitors[monitor] = WallpaperEntry(
@@ -344,11 +364,12 @@ def _set_image_wallpaper_for_all_outputs(
                 previous.pid = None
         save_state(state, state_path)
 
+    stop_videos_after_image_set = bool(pids_to_stop) and _basic_image_bridge_enabled(config)
     transitions_config = config.get("transitions", {})
-    for pid in pids_to_stop:
-        terminate_pid(
-            pid,
-            float(transitions_config.get("video_stop_timeout_seconds", 2.0)),
+    if not stop_videos_after_image_set:
+        _terminate_pids(
+            pids_to_stop,
+            timeout_seconds=float(transitions_config.get("video_stop_timeout_seconds", 2.0)),
             kill_on_timeout=bool(transitions_config.get("kill_video_on_timeout", True)),
         )
 
@@ -360,6 +381,13 @@ def _set_image_wallpaper_for_all_outputs(
     )
     run_hook_stage("before_set", config, hook_context)
     runner.run(command)
+
+    if stop_videos_after_image_set:
+        _terminate_pids(
+            pids_to_stop,
+            timeout_seconds=float(transitions_config.get("video_stop_timeout_seconds", 2.0)),
+            kill_on_timeout=bool(transitions_config.get("kill_video_on_timeout", True)),
+        )
 
     with STATE_LOCK:
         state = load_state(state_path)
@@ -390,3 +418,55 @@ def _monitor_name(monitor: Monitor | str) -> str:
     if isinstance(monitor, str):
         return monitor
     return monitor.name
+
+
+def _should_stop_video_after_image_set(
+    config: dict,
+    transition: TransitionKind,
+    backend_name: str,
+    previous_pid: int | None,
+) -> bool:
+    if not previous_pid:
+        return False
+    if transition is not TransitionKind.VIDEO_TO_IMAGE:
+        return False
+    if backend_name not in IMAGE_BACKENDS:
+        return False
+    return _basic_image_bridge_enabled(config)
+
+
+def _basic_image_bridge_enabled(config: dict) -> bool:
+    basic_config = config.get("transitions", {}).get("basic", {})
+    if not bool(basic_config.get("enabled", True)):
+        return False
+    return bool(basic_config.get("set_image_before_stopping_video", True))
+
+
+def _terminate_pids(
+    pids: list[int],
+    *,
+    timeout_seconds: float,
+    kill_on_timeout: bool,
+) -> None:
+    if not pids:
+        return
+    if len(pids) == 1:
+        terminate_pid(
+            pids[0],
+            timeout_seconds,
+            kill_on_timeout=kill_on_timeout,
+        )
+        return
+
+    with ThreadPoolExecutor(max_workers=len(pids)) as executor:
+        futures = [
+            executor.submit(
+                terminate_pid,
+                pid,
+                timeout_seconds,
+                kill_on_timeout=kill_on_timeout,
+            )
+            for pid in pids
+        ]
+        for future in futures:
+            future.result()

@@ -81,6 +81,16 @@ Backend options are global settings. Update them under `Settings -> Backend Defa
 The global backend defaults also include transition step, duration, FPS, angle, position, invert-y, bezier curve, and wave dimensions.
 
 The GUI requests a dialog-style Qt window so Hyprland can treat it like a floating manager window by default.
+Its Wayland app id is `wallmux-gui` and its window title is `wallmux`, so Hyprland rules can match either:
+
+```lua
+hl.window_rule({
+    match = { class = "^(wallmux-gui)$" },
+    float = true,
+    size = "800 600",
+    center = true,
+})
+```
 
 For Qt theme diagnostics:
 
@@ -172,6 +182,16 @@ timeout_seconds = 2.0
 ```
 
 Supported transition placeholders are `{monitor}`, `{from_file}`, `{to_file}`, `{from_backend}`, `{to_backend}`, `{transition}`, and `{stage}`.
+
+Wallmux also ships with basic transition orchestration enabled by default:
+
+```toml
+[transitions.basic]
+enabled = true
+set_image_before_stopping_video = true
+```
+
+For `video -> image`, this sets the image backend first and then stops the old video processes, reducing visible blank gaps without requiring a custom overlay.
 
 ## Development
 

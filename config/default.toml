@@ -62,12 +62,19 @@ mode = "random"
 target = "all"
 monitor = ""
 
+[gui]
+zen_mode = false
+
 [daemon]
 startup_restore_retry_seconds = 5.0
 
 [transitions]
 video_stop_timeout_seconds = 2.0
 kill_video_on_timeout = true
+
+[transitions.basic]
+enabled = true
+set_image_before_stopping_video = true
 
 [transitions.effects]
 fade_overlay = false

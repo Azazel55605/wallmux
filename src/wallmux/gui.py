@@ -74,6 +74,8 @@ TYPE_FILTERS = {
 ALL_MONITORS = "__all_monitors__"
 IMAGE_BACKENDS = {"awww", "swww"}
 VIDEO_BACKENDS = {"mpvpaper", "gslapper"}
+APP_ID = "wallmux-gui"
+WINDOW_TITLE = "wallmux"
 IMAGE_TRANSITIONS = [
     "none",
     "simple",
@@ -137,7 +139,7 @@ class WallmuxWindow(QMainWindow):
         self.thread_pool.setMaxThreadCount(min(4, max(2, self.thread_pool.maxThreadCount())))
 
         self.setWindowFlag(Qt.WindowType.Dialog, True)
-        self.setWindowTitle("Wallmux")
+        self.setWindowTitle(WINDOW_TITLE)
         self.resize(1100, 700)
 
         self.tabs = QTabWidget()
@@ -153,6 +155,10 @@ class WallmuxWindow(QMainWindow):
         self.daemon_status_timer = QTimer(self)
         self.daemon_status_timer.timeout.connect(self.refresh_daemon_status)
         self.daemon_status_timer.start(5000)
+        self.set_zen_mode(
+            bool(self.config.get("gui", {}).get("zen_mode", False)),
+            persist=False,
+        )
         self.preview.setText("Choose a folder")
         QTimer.singleShot(0, self._load_initial_folder)
 
@@ -243,9 +249,9 @@ class WallmuxWindow(QMainWindow):
         zen_action.triggered.connect(self.toggle_zen_mode)
         self.addAction(zen_action)
 
-        exit_zen_action = QAction("Exit Zen Mode", self)
+        exit_zen_action = QAction("Close", self)
         exit_zen_action.setShortcut(QKeySequence("Escape"))
-        exit_zen_action.triggered.connect(self.exit_zen_mode)
+        exit_zen_action.triggered.connect(self.close)
         self.addAction(exit_zen_action)
 
         set_action = QAction("Set Selected Wallpaper", self)
@@ -432,6 +438,8 @@ class WallmuxWindow(QMainWindow):
         layout.addWidget(hooks_group)
 
         transition_form = QFormLayout()
+        self.basic_transitions_check = QCheckBox("Basic transitions")
+        self.basic_image_bridge_check = QCheckBox("Set image before stopping video")
         self.fade_overlay_check = QCheckBox("Fade overlay")
         self.screenshot_bridge_check = QCheckBox("Screenshot bridge")
         self.quickshell_overlay_check = QCheckBox("QuickShell overlay")
@@ -443,6 +451,8 @@ class WallmuxWindow(QMainWindow):
         self.transition_effect_timeout_spin.setSingleStep(0.5)
         self.transition_effect_timeout_spin.setDecimals(1)
 
+        transition_form.addRow("", self.basic_transitions_check)
+        transition_form.addRow("", self.basic_image_bridge_check)
         transition_form.addRow("", self.fade_overlay_check)
         transition_form.addRow("Fade Command", self.fade_command_edit)
         transition_form.addRow("", self.screenshot_bridge_check)
@@ -867,7 +877,13 @@ class WallmuxWindow(QMainWindow):
             combo.setCurrentIndex(index)
 
     def refresh_transition_settings(self) -> None:
-        effects = self.config.get("transitions", {}).get("effects", {})
+        transitions = self.config.get("transitions", {})
+        basic = transitions.get("basic", {})
+        effects = transitions.get("effects", {})
+        self.basic_transitions_check.setChecked(bool(basic.get("enabled", True)))
+        self.basic_image_bridge_check.setChecked(
+            bool(basic.get("set_image_before_stopping_video", True))
+        )
         self.fade_overlay_check.setChecked(bool(effects.get("fade_overlay", False)))
         self.fade_command_edit.setText(str(effects.get("fade_command", "")))
         self.screenshot_bridge_check.setChecked(bool(effects.get("screenshot_bridge", False)))
@@ -878,6 +894,10 @@ class WallmuxWindow(QMainWindow):
 
     def save_transition_settings(self) -> None:
         transitions = self.config.setdefault("transitions", {})
+        transitions["basic"] = {
+            "enabled": self.basic_transitions_check.isChecked(),
+            "set_image_before_stopping_video": self.basic_image_bridge_check.isChecked(),
+        }
         transitions["effects"] = {
             "fade_overlay": self.fade_overlay_check.isChecked(),
             "fade_command": self.fade_command_edit.text(),
@@ -907,11 +927,7 @@ class WallmuxWindow(QMainWindow):
     def toggle_zen_mode(self) -> None:
         self.set_zen_mode(not self.zen_mode)
 
-    def exit_zen_mode(self) -> None:
-        if self.zen_mode:
-            self.set_zen_mode(False)
-
-    def set_zen_mode(self, enabled: bool) -> None:
+    def set_zen_mode(self, enabled: bool, *, persist: bool = True) -> None:
         self.zen_mode = enabled
         self.zen_mode_check.blockSignals(True)
         self.zen_mode_check.setChecked(enabled)
@@ -923,6 +939,9 @@ class WallmuxWindow(QMainWindow):
         self.status.setVisible(not enabled)
         self.grid.setSpacing(8 if enabled else 0)
         self.grid.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        if persist:
+            self.config.setdefault("gui", {})["zen_mode"] = enabled
+            write_config(self.config, user_config_file())
 
     def queue_thumbnail(self, item: WallpaperItem) -> None:
         key = str(item.path)
@@ -995,8 +1014,9 @@ def main() -> int:
         QApplication.setDesktopSettingsAware(True)
         _add_system_qt_plugin_paths()
         app = QApplication(argv)
-        app.setApplicationName("Wallmux")
+        app.setApplicationName(APP_ID)
         app.setApplicationDisplayName("Wallmux")
+        app.setDesktopFileName(APP_ID)
 
         if theme_debug:
             _print_theme_debug(app)
@@ -1018,6 +1038,8 @@ def _add_system_qt_plugin_paths() -> None:
 
 def _print_theme_debug(app: QApplication) -> None:
     print(f"platform: {app.platformName()}")
+    print(f"application name: {app.applicationName()}")
+    print(f"desktop file name: {app.desktopFileName()}")
     print(f"style: {app.style().objectName()}")
     print(f"available styles: {', '.join(QStyleFactory.keys())}")
     print("library paths:")
