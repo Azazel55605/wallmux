@@ -4,8 +4,9 @@ Wallmux is a Hyprland-first wallpaper manager and orchestrator for Arch Linux.
 
 It does not render wallpapers directly. Instead, it routes wallpapers to established backends:
 
-- Images and GIFs: `awww` by default, with `swww` support planned.
-- Videos: `mpvpaper` first, with `gSlapper` support planned.
+- Images: `awww` by default, with `swww` and `hyprpaper` support.
+- GIFs: `awww` by default, with `swww`, `mpvpaper`, and `gSlapper` support.
+- Videos: `mpvpaper` first, with `gSlapper` support.
 - Hooks: `pywal`, `matugen`, QuickShell reloads, and other desktop automation.
 
 ## Status
@@ -67,7 +68,7 @@ GUI keyboard controls:
 
 The monitor selector includes an `All monitors` target. Backend controls are filtered by wallpaper type:
 
-- Images: `awww`, `swww`
+- Images: `awww`, `swww`, `hyprpaper`
 - GIFs: `awww`, `swww`, `mpvpaper`, `gslapper`
 - Videos: `mpvpaper`, `gslapper`
 
@@ -78,7 +79,9 @@ Backend options are global settings. Update them under `Settings -> Backend Defa
 - `none`, `simple`, `fade`, `left`, `right`, `top`, `bottom`
 - `wipe`, `wave`, `grow`, `center`, `any`, `outer`, `random`
 
-The global backend defaults also include transition step, duration, FPS, angle, position, invert-y, bezier curve, and wave dimensions.
+The global backend defaults also include transition step, duration, FPS, angle, position, invert-y, bezier curve, and wave dimensions for `awww`/`swww`, plus `hyprpaper` command and fit mode settings.
+
+`hyprpaper` support uses `hyprctl hyprpaper preload` followed by `hyprctl hyprpaper wallpaper`, so the `hyprpaper` daemon must already be running with IPC enabled.
 
 The GUI requests a dialog-style Qt window so Hyprland can treat it like a floating manager window by default.
 Its Wayland app id is `wallmux-gui` and its window title is `wallmux`, so Hyprland rules can match either:
@@ -148,7 +151,7 @@ The `All monitors` target can apply wallpapers either together or one by one:
 all_monitor_mode = "simultaneous" # or "sequential"
 ```
 
-For `awww` and `swww`, simultaneous mode sends one command with all outputs joined, so `any` and `random` transitions choose one shared effect across monitors.
+For `awww` and `swww`, simultaneous mode sends one command with all outputs joined, so `any` and `random` transitions choose one shared effect across monitors. `hyprpaper` uses per-monitor IPC commands because its target syntax is monitor-specific.
 
 Auto switching is configured with:
 

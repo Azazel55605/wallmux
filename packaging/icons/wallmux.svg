@@ -1,19 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
   <defs>
-    <linearGradient id="sky" x1="14" y1="18" x2="114" y2="112" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#35a7ff"/>
-      <stop offset="0.55" stop-color="#4263eb"/>
-      <stop offset="1" stop-color="#2f3645"/>
-    </linearGradient>
-    <linearGradient id="sun" x1="80" y1="28" x2="103" y2="51" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ffe066"/>
-      <stop offset="1" stop-color="#ff922b"/>
+    <linearGradient id="line" x1="22" y1="20" x2="106" y2="108" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#41d6c3"/>
+      <stop offset=".52" stop-color="#4aa3ff"/>
+      <stop offset="1" stop-color="#7c6cff"/>
     </linearGradient>
   </defs>
-  <rect x="10" y="16" width="108" height="86" rx="10" fill="url(#sky)"/>
-  <circle cx="93" cy="39" r="13" fill="url(#sun)"/>
-  <path d="M18 89 49 58l23 22 14-13 24 22v5H18z" fill="#eef2ff"/>
-  <path d="M18 89 49 58l23 22 14-13 24 22v13H18z" fill="#1f2937" opacity=".45"/>
-  <rect x="35" y="106" width="58" height="8" rx="4" fill="#334155"/>
-  <rect x="52" y="100" width="24" height="10" fill="#475569"/>
+  <g fill="none" stroke="url(#line)" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="17" y="22" width="94" height="68" rx="11" stroke-width="6"/>
+    <path d="M25 78 46 57l18 17 12-12 27 25" stroke-width="6"/>
+    <circle cx="86" cy="43" r="8" stroke-width="6"/>
+    <path d="M50 101h28" stroke-width="7"/>
+    <path d="M64 91v10" stroke-width="7"/>
+    <path d="M37 109h54" stroke-width="7"/>
+  </g>
 </svg>

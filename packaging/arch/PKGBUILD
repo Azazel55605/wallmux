@@ -23,6 +23,7 @@ makedepends=(
 optdepends=(
   "awww: default image and GIF wallpaper backend"
   "swww: optional image and GIF wallpaper backend"
+  "hyprpaper: optional static image wallpaper backend"
   "mpvpaper: default video wallpaper backend"
   "gslapper: optional video/GIF wallpaper backend"
   "ffmpeg: video thumbnail extraction"

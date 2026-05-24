@@ -72,7 +72,7 @@ TYPE_FILTERS = {
 }
 
 ALL_MONITORS = "__all_monitors__"
-IMAGE_BACKENDS = {"awww", "swww"}
+IMAGE_BACKENDS = {"awww", "swww", "hyprpaper"}
 VIDEO_BACKENDS = {"mpvpaper", "gslapper"}
 APP_ID = "wallmux-gui"
 WINDOW_TITLE = "wallmux"
@@ -401,7 +401,7 @@ class WallmuxWindow(QMainWindow):
 
         routing_form = QFormLayout()
         self.image_backend_default_box = QComboBox()
-        self.image_backend_default_box.addItems(["awww", "swww"])
+        self.image_backend_default_box.addItems(["awww", "swww", "hyprpaper"])
         self.gif_backend_default_box = QComboBox()
         self.gif_backend_default_box.addItems(["awww", "swww", "mpvpaper", "gslapper"])
         self.video_backend_default_box = QComboBox()
@@ -460,6 +460,17 @@ class WallmuxWindow(QMainWindow):
         swww_box = QGroupBox("swww")
         swww_box.setLayout(swww_form)
         backend_layout.addWidget(swww_box)
+
+        self.hyprpaper_command_edit = QLineEdit()
+        self.hyprpaper_fit_mode_box = QComboBox()
+        self.hyprpaper_fit_mode_box.setEditable(True)
+        self.hyprpaper_fit_mode_box.addItems(["cover", "contain", "tile"])
+        hyprpaper_form = QFormLayout()
+        hyprpaper_form.addRow("Command", self.hyprpaper_command_edit)
+        hyprpaper_form.addRow("Fit mode", self.hyprpaper_fit_mode_box)
+        hyprpaper_box = QGroupBox("hyprpaper")
+        hyprpaper_box.setLayout(hyprpaper_form)
+        backend_layout.addWidget(hyprpaper_box)
 
         self.mpvpaper_command_edit = QLineEdit()
         self.mpvpaper_options_edit = QLineEdit()
@@ -772,6 +783,10 @@ class WallmuxWindow(QMainWindow):
                 "transition_bezier": self.swww_transition_bezier_edit.text(),
                 "transition_wave": self.swww_transition_wave_edit.text(),
             },
+            "hyprpaper": {
+                "command": self.hyprpaper_command_edit.text(),
+                "fit_mode": self.hyprpaper_fit_mode_box.currentText(),
+            },
             "mpvpaper": {
                 "command": self.mpvpaper_command_edit.text(),
                 "options": self.mpvpaper_options_edit.text(),
@@ -963,6 +978,9 @@ class WallmuxWindow(QMainWindow):
 
         self._load_image_backend_settings("awww", backends.get("awww", {}))
         self._load_image_backend_settings("swww", backends.get("swww", {}))
+        hyprpaper = backends.get("hyprpaper", {})
+        self.hyprpaper_command_edit.setText(str(hyprpaper.get("command", "hyprctl")))
+        self.hyprpaper_fit_mode_box.setCurrentText(str(hyprpaper.get("fit_mode", "cover")))
         mpvpaper = backends.get("mpvpaper", {})
         self.mpvpaper_command_edit.setText(str(mpvpaper.get("command", "mpvpaper")))
         self.mpvpaper_options_edit.setText(str(mpvpaper.get("options", "")))

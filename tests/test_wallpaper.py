@@ -142,6 +142,50 @@ def test_set_image_accepts_backend_overrides(tmp_path: Path) -> None:
     assert _option(command, "--transition-wave") == "32,12"
 
 
+def test_set_image_accepts_hyprpaper_backend(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    state_path = tmp_path / "state.json"
+    image = tmp_path / "wallpaper.png"
+    image.write_bytes(b"")
+
+    result = set_wallpaper(
+        image,
+        "DP-1",
+        config=sample_config(tmp_path),
+        backend_override="hyprpaper",
+        runner=runner,
+        state_path=state_path,
+    )
+
+    assert result.backend == "hyprpaper"
+    assert runner.runs == [
+        ["hyprctl", "hyprpaper", "preload", str(image)],
+        ["hyprctl", "hyprpaper", "wallpaper", f"DP-1,{image},cover"],
+    ]
+    state = load_state(state_path)
+    assert state.monitors["DP-1"].backend == "hyprpaper"
+
+
+def test_set_all_hyprpaper_runs_per_monitor_commands(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    state_path = tmp_path / "state.json"
+    image = tmp_path / "wallpaper.jpg"
+    image.write_bytes(b"")
+
+    results = set_wallpaper_for_all(
+        image,
+        config=sample_config(tmp_path),
+        backend_override="hyprpaper",
+        runner=runner,
+        monitor_provider=lambda: [Monitor("DP-1"), Monitor("HDMI-A-1")],
+        state_path=state_path,
+    )
+
+    assert [result.monitor for result in results] == ["DP-1", "HDMI-A-1"]
+    assert ["hyprctl", "hyprpaper", "wallpaper", f"DP-1,{image},cover"] in runner.runs
+    assert ["hyprctl", "hyprpaper", "wallpaper", f"HDMI-A-1,{image},cover"] in runner.runs
+
+
 def test_gif_with_video_backend_tracks_process(tmp_path: Path) -> None:
     runner = FakeRunner()
     state_path = tmp_path / "state.json"

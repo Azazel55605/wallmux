@@ -192,3 +192,4 @@ Record notable checks here as the project moves.
 - 2026-05-24: Added inhibition rules for fullscreen clients and running process names, pausing auto switching and tracked video wallpaper processes while games/rendering tasks are active without blocking merely open launchers.
 - 2026-05-24: Added toggleable desktop notifications for successful wallpaper switches and switching failures through `notify-send`.
 - 2026-05-24: Finished Phase 6 packaging assets with Arch `PKGBUILD`, systemd user service, desktop file, app icon, Hyprland startup docs, AUR notes, and local desktop/service Makefile helpers.
+- 2026-05-24: Added `hyprpaper` as an optional static image backend and refreshed the packaged app icon into a minimal line-style mark.

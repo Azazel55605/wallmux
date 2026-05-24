@@ -1,11 +1,12 @@
 import pytest
 
-from wallmux.backends.routing import route_wallpaper
+from wallmux.backends.routing import compatible_backends, route_wallpaper
 from wallmux.core.mime import WallpaperType
 
 
 def test_routes_images_to_awww() -> None:
     assert route_wallpaper(WallpaperType.IMAGE) == "awww"
+    assert "hyprpaper" in compatible_backends(WallpaperType.IMAGE)
 
 
 def test_routes_gifs_to_awww() -> None:

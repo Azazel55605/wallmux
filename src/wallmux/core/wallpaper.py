@@ -20,7 +20,10 @@ from wallmux.core.transition_effects import TransitionContext, run_transition_st
 from wallmux.core.transitions import TransitionKind, plan_transition
 
 STATE_LOCK = threading.Lock()
-IMAGE_BACKENDS = {"awww", "swww"}
+Command = list[str]
+CommandPlan = Command | list[Command]
+IMAGE_BACKENDS = {"awww", "swww", "hyprpaper"}
+GROUPED_OUTPUT_BACKENDS = {"awww", "swww"}
 
 
 class WallmuxError(RuntimeError):
@@ -28,21 +31,21 @@ class WallmuxError(RuntimeError):
 
 
 class CommandRunner(Protocol):
-    def run(self, command: list[str]) -> None:
+    def run(self, command: Command) -> None:
         """Run a foreground backend command."""
 
-    def start(self, command: list[str]) -> int:
+    def start(self, command: Command) -> int:
         """Start a long-lived backend process and return its PID."""
 
 
 class SubprocessCommandRunner:
-    def run(self, command: list[str]) -> None:
+    def run(self, command: Command) -> None:
         result = subprocess.run(command, check=False, capture_output=True, text=True)
         if result.returncode != 0:
             message = result.stderr.strip() or result.stdout.strip() or "command failed"
             raise WallmuxError(f"{command[0]} failed: {message}")
 
-    def start(self, command: list[str]) -> int:
+    def start(self, command: Command) -> int:
         try:
             process = subprocess.Popen(
                 command,
@@ -60,7 +63,7 @@ class SetResult:
     file: Path
     backend: str
     wallpaper_type: WallpaperType
-    command: list[str]
+    command: CommandPlan
     pid: int | None = None
     transition: TransitionKind = TransitionKind.FIRST_SET
 
@@ -299,15 +302,17 @@ def restore_wallpapers(
 
 
 def _execute(
-    command: list[str],
+    command: CommandPlan,
     backend_name: str,
     wallpaper_type: WallpaperType,
     runner: CommandRunner,
 ) -> int | None:
     if wallpaper_type is WallpaperType.VIDEO or backend_name in {"mpvpaper", "gslapper"}:
+        if _is_command_sequence(command):
+            raise WallmuxError(f"{backend_name} cannot be started from multiple commands")
         return runner.start(command)
 
-    runner.run(command)
+    _run_foreground(command, runner)
     return None
 
 
@@ -321,7 +326,7 @@ def _can_set_all_outputs_together(
         wallpaper_type,
         config.get("backend_rules", {}),
     )
-    return backend_name in IMAGE_BACKENDS and wallpaper_type is not WallpaperType.VIDEO
+    return backend_name in GROUPED_OUTPUT_BACKENDS and wallpaper_type is not WallpaperType.VIDEO
 
 
 def _set_image_wallpaper_for_all_outputs(
@@ -380,7 +385,7 @@ def _set_image_wallpaper_for_all_outputs(
         wallpaper_type=wallpaper_type,
     )
     run_hook_stage("before_set", config, hook_context)
-    runner.run(command)
+    _run_foreground(command, runner)
 
     if stop_videos_after_image_set:
         _terminate_pids(
@@ -440,6 +445,18 @@ def _basic_image_bridge_enabled(config: dict) -> bool:
     if not bool(basic_config.get("enabled", True)):
         return False
     return bool(basic_config.get("set_image_before_stopping_video", True))
+
+
+def _run_foreground(command: CommandPlan, runner: CommandRunner) -> None:
+    if _is_command_sequence(command):
+        for item in command:
+            runner.run(item)
+        return
+    runner.run(command)
+
+
+def _is_command_sequence(command: CommandPlan) -> bool:
+    return bool(command) and isinstance(command[0], list)
 
 
 def _terminate_pids(

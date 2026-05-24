@@ -6,6 +6,7 @@ from typing import Any
 
 from wallmux.backends.awww import AwwwBackend
 from wallmux.backends.gslapper import GslapperBackend
+from wallmux.backends.hyprpaper import HyprpaperBackend
 from wallmux.backends.mpvpaper import MpvpaperBackend
 from wallmux.backends.swww import SwwwBackend
 from wallmux.core.mime import WallpaperType
@@ -17,7 +18,7 @@ DEFAULT_BACKENDS = {
 }
 
 COMPATIBLE_BACKENDS = {
-    WallpaperType.IMAGE: ("awww", "swww"),
+    WallpaperType.IMAGE: ("awww", "swww", "hyprpaper"),
     WallpaperType.GIF: ("awww", "swww", "mpvpaper", "gslapper"),
     WallpaperType.VIDEO: ("mpvpaper", "gslapper"),
 }
@@ -52,6 +53,8 @@ def build_backend(
         return AwwwBackend(**backend_config)
     if name == "swww":
         return SwwwBackend(**backend_config)
+    if name == "hyprpaper":
+        return HyprpaperBackend(**backend_config)
     if name == "mpvpaper":
         return MpvpaperBackend(**backend_config)
     if name == "gslapper":
