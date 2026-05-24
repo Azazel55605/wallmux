@@ -231,6 +231,50 @@ def test_daemon_cleans_stale_pids(tmp_path: Path, monkeypatch) -> None:
     assert load_state(state_path).monitors["DP-1"].pid is None
 
 
+def test_daemon_pauses_and_resumes_tracked_videos_when_inhibited(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state_path = tmp_path / "state.json"
+    save_state(
+        WallmuxState(
+            monitors={
+                "DP-1": WallpaperEntry(
+                    file="/tmp/video.mp4",
+                    backend="mpvpaper",
+                    wallpaper_type="video",
+                    pid=1234,
+                )
+            }
+        ),
+        state_path,
+    )
+    paused: list[int] = []
+    resumed: list[int] = []
+    statuses = iter([True, False])
+
+    monkeypatch.setattr(
+        "wallmux.core.daemon.evaluate_inhibition",
+        lambda config: type("Status", (), {"inhibited": next(statuses), "reason": "game"})(),
+    )
+    monkeypatch.setattr("wallmux.core.daemon.pause_pid", lambda pid: paused.append(pid) or True)
+    monkeypatch.setattr("wallmux.core.daemon.resume_pid", lambda pid: resumed.append(pid) or True)
+    config = sample_config(tmp_path)
+    daemon = WallmuxDaemon(
+        config=config,
+        config_path=sample_config_path(tmp_path),
+        state_path=state_path,
+        restore_on_startup=False,
+    )
+
+    daemon._update_inhibition()
+    daemon.next_inhibition_check_at = 0.0
+    daemon._update_inhibition()
+
+    assert paused == [1234]
+    assert resumed == [1234]
+
+
 def test_daemon_reports_invalid_json(tmp_path: Path) -> None:
     daemon = WallmuxDaemon(
         config=sample_config(tmp_path),

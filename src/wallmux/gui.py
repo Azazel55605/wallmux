@@ -320,6 +320,35 @@ class WallmuxWindow(QMainWindow):
         autoswitch_form.addRow("", autoswitch_buttons)
         layout.addWidget(autoswitch_group)
 
+        inhibition_group = QGroupBox("Inhibition")
+        inhibition_form = QFormLayout(inhibition_group)
+        self.inhibition_enabled_check = QCheckBox("Enabled")
+        self.inhibition_pause_autoswitch_check = QCheckBox("Pause auto switching")
+        self.inhibition_pause_videos_check = QCheckBox("Pause video wallpapers")
+        self.inhibition_fullscreen_check = QCheckBox("Any fullscreen window")
+        self.inhibition_interval_spin = QDoubleSpinBox()
+        self.inhibition_interval_spin.setRange(1.0, 300.0)
+        self.inhibition_interval_spin.setSingleStep(1.0)
+        self.inhibition_interval_spin.setDecimals(1)
+        self.inhibition_process_names_edit = QTextEdit()
+        self.inhibition_process_names_edit.setMinimumHeight(55)
+        self.inhibition_class_patterns_edit = QTextEdit()
+        self.inhibition_class_patterns_edit.setMinimumHeight(70)
+        self.inhibition_title_patterns_edit = QTextEdit()
+        self.inhibition_title_patterns_edit.setMinimumHeight(70)
+        inhibition_form.addRow("", self.inhibition_enabled_check)
+        inhibition_form.addRow("", self.inhibition_pause_autoswitch_check)
+        inhibition_form.addRow("", self.inhibition_pause_videos_check)
+        inhibition_form.addRow("", self.inhibition_fullscreen_check)
+        inhibition_form.addRow("Check Interval", self.inhibition_interval_spin)
+        inhibition_form.addRow("Process Names", self.inhibition_process_names_edit)
+        inhibition_form.addRow("Class Patterns", self.inhibition_class_patterns_edit)
+        inhibition_form.addRow("Title Patterns", self.inhibition_title_patterns_edit)
+        save_inhibition_button = QPushButton("Save Inhibition")
+        save_inhibition_button.clicked.connect(self.save_inhibition_settings)
+        inhibition_form.addRow("", save_inhibition_button)
+        layout.addWidget(inhibition_group)
+
         self.folder_list = QListWidget()
         folders_group = QGroupBox("Wallpaper Folders")
         folders_layout = QVBoxLayout(folders_group)
@@ -734,6 +763,25 @@ class WallmuxWindow(QMainWindow):
         self.status.showMessage("Auto switching saved and reloaded", 5000)
         self.refresh_daemon_status(True)
 
+    def save_inhibition_settings(self) -> None:
+        self.config["inhibition"] = {
+            "enabled": self.inhibition_enabled_check.isChecked(),
+            "check_interval_seconds": self.inhibition_interval_spin.value(),
+            "pause_autoswitch": self.inhibition_pause_autoswitch_check.isChecked(),
+            "pause_videos": self.inhibition_pause_videos_check.isChecked(),
+            "fullscreen": self.inhibition_fullscreen_check.isChecked(),
+            "process_names": self._pattern_lines(self.inhibition_process_names_edit),
+            "class_patterns": self._pattern_lines(self.inhibition_class_patterns_edit),
+            "title_patterns": self._pattern_lines(self.inhibition_title_patterns_edit),
+        }
+        write_config(self.config, user_config_file())
+        try:
+            send_request({"command": "reload"})
+        except DaemonUnavailable:
+            self.status.showMessage("Inhibition saved; wallmuxd is not running", 6000)
+            return
+        self.status.showMessage("Inhibition saved and reloaded", 5000)
+
     def autoswitch_now(self) -> None:
         request = {
             "command": "autoswitch-now",
@@ -760,6 +808,7 @@ class WallmuxWindow(QMainWindow):
             self.folder_list.addItem(folder)
         self.refresh_backend_settings()
         self.refresh_autoswitch_settings()
+        self.refresh_inhibition_settings()
         self.refresh_transition_settings()
 
     def refresh_daemon_status(self, running: bool | None = None) -> None:
@@ -784,6 +833,34 @@ class WallmuxWindow(QMainWindow):
         self._set_combo_data(self.autoswitch_mode_box, str(autoswitch.get("mode", "random")))
         self._set_combo_data(self.autoswitch_target_box, str(autoswitch.get("target", "all")))
         self.autoswitch_monitor_edit.setText(str(autoswitch.get("monitor", "")))
+
+    def refresh_inhibition_settings(self) -> None:
+        inhibition = self.config.get("inhibition", {})
+        self.inhibition_enabled_check.setChecked(bool(inhibition.get("enabled", True)))
+        self.inhibition_interval_spin.setValue(
+            float(inhibition.get("check_interval_seconds", 5.0))
+        )
+        self.inhibition_pause_autoswitch_check.setChecked(
+            bool(inhibition.get("pause_autoswitch", True))
+        )
+        self.inhibition_pause_videos_check.setChecked(bool(inhibition.get("pause_videos", True)))
+        self.inhibition_fullscreen_check.setChecked(bool(inhibition.get("fullscreen", True)))
+        self.inhibition_process_names_edit.setPlainText(
+            "\n".join(inhibition.get("process_names", []))
+        )
+        self.inhibition_class_patterns_edit.setPlainText(
+            "\n".join(inhibition.get("class_patterns", []))
+        )
+        self.inhibition_title_patterns_edit.setPlainText(
+            "\n".join(inhibition.get("title_patterns", []))
+        )
+
+    def _pattern_lines(self, text_edit: QTextEdit) -> list[str]:
+        return [
+            line.strip()
+            for line in text_edit.toPlainText().splitlines()
+            if line.strip()
+        ]
 
     def refresh_backend_settings(self) -> None:
         general = self.config.get("general", {})

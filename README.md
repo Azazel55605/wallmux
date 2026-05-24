@@ -161,6 +161,22 @@ target = "all"  # all, focused, or monitor
 monitor = ""
 ```
 
+Wallmux can inhibit auto switching and pause tracked video wallpapers while specific apps are active:
+
+```toml
+[inhibition]
+enabled = true
+check_interval_seconds = 5.0
+pause_autoswitch = true
+pause_videos = true
+fullscreen = true
+process_names = ["gamescope", "gamemode", "wine64", "wineserver"]
+class_patterns = []
+title_patterns = []
+```
+
+Process names are checked with `pgrep -x`. Class/title patterns are optional regular expressions matched against Hyprland clients from `hyprctl clients -j`.
+
 The default `mpvpaper` options ignore the user's mpv config, suppress mpv status output, crop/fill mixed aspect-ratio monitors, and use cheaper scaling for large videos:
 
 ```toml

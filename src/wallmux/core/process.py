@@ -55,3 +55,23 @@ def terminate_pid(
         time.sleep(0.05)
 
     return not pid_is_alive(pid)
+
+
+def pause_pid(pid: int) -> bool:
+    if not pid_is_alive(pid):
+        return False
+    try:
+        os.kill(pid, signal.SIGSTOP)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def resume_pid(pid: int) -> bool:
+    if not pid_is_alive(pid):
+        return False
+    try:
+        os.kill(pid, signal.SIGCONT)
+    except ProcessLookupError:
+        return False
+    return True

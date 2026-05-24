@@ -65,6 +65,16 @@ monitor = ""
 [gui]
 zen_mode = false
 
+[inhibition]
+enabled = true
+check_interval_seconds = 5.0
+pause_autoswitch = true
+pause_videos = true
+fullscreen = true
+process_names = ["gamescope", "gamemode", "wine64", "wineserver"]
+class_patterns = []
+title_patterns = []
+
 [daemon]
 startup_restore_retry_seconds = 5.0
 

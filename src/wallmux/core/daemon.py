@@ -20,9 +20,16 @@ from wallmux.core.autoswitch import (
     load_wallpaper_library,
 )
 from wallmux.core.config import load_config
+from wallmux.core.inhibition import (
+    InhibitionStatus,
+    evaluate_inhibition,
+    inhibition_interval,
+    pause_autoswitch,
+    pause_videos,
+)
 from wallmux.core.ipc import default_socket_path
 from wallmux.core.monitors import get_focused_monitor, list_monitors
-from wallmux.core.process import pid_is_alive, terminate_pid
+from wallmux.core.process import pause_pid, pid_is_alive, resume_pid, terminate_pid
 from wallmux.core.state import load_state, save_state
 from wallmux.core.wallpaper import (
     CommandRunner,
@@ -59,6 +66,9 @@ class WallmuxDaemon:
         self.next_autoswitch_at = time.monotonic() + autoswitch_interval(self.config)
         self.startup_restore_pending = False
         self.next_startup_restore_at = time.monotonic()
+        self.next_inhibition_check_at = 0.0
+        self.inhibition_status = InhibitionStatus(False)
+        self.paused_video_pids: set[int] = set()
 
     def start(self) -> None:
         self.cleanup_stale_pids()
@@ -135,10 +145,14 @@ class WallmuxDaemon:
     def reload_config(self) -> None:
         self.config = load_config(self.config_path)
         self.next_autoswitch_at = time.monotonic() + autoswitch_interval(self.config)
+        self.next_inhibition_check_at = 0.0
 
     def tick(self) -> None:
         self._retry_startup_restore()
+        self._update_inhibition()
         if not autoswitch_enabled(self.config):
+            return
+        if self.inhibition_status.inhibited and pause_autoswitch(self.config):
             return
         now = time.monotonic()
         if now < self.next_autoswitch_at:
@@ -233,6 +247,7 @@ class WallmuxDaemon:
             "daemon": {
                 "running": True,
                 "autoswitch": self._autoswitch_status(),
+                "inhibition": self._inhibition_status(),
             },
         }
 
@@ -301,6 +316,13 @@ class WallmuxDaemon:
             "next_switch_seconds": max(0.0, self.next_autoswitch_at - time.monotonic()),
         }
 
+    def _inhibition_status(self) -> dict[str, Any]:
+        return {
+            "inhibited": self.inhibition_status.inhibited,
+            "reason": self.inhibition_status.reason,
+            "paused_video_pids": sorted(self.paused_video_pids),
+        }
+
     def _restore_on_startup(self) -> None:
         try:
             restore_wallpapers(
@@ -330,6 +352,29 @@ class WallmuxDaemon:
             1.0,
             float(self.config.get("daemon", {}).get("startup_restore_retry_seconds", 5.0)),
         )
+
+    def _update_inhibition(self) -> None:
+        now = time.monotonic()
+        if now < self.next_inhibition_check_at:
+            return
+        self.next_inhibition_check_at = now + inhibition_interval(self.config)
+        previous = self.inhibition_status
+        self.inhibition_status = evaluate_inhibition(self.config)
+        if self.inhibition_status.inhibited and pause_videos(self.config):
+            self._pause_tracked_videos()
+        elif previous.inhibited:
+            self._resume_paused_videos()
+
+    def _pause_tracked_videos(self) -> None:
+        state = load_state(self.state_path)
+        for entry in state.monitors.values():
+            if entry.pid and entry.pid not in self.paused_video_pids and pause_pid(entry.pid):
+                self.paused_video_pids.add(entry.pid)
+
+    def _resume_paused_videos(self) -> None:
+        for pid in list(self.paused_video_pids):
+            resume_pid(pid)
+            self.paused_video_pids.discard(pid)
 
 
 def _serialize_result(result: SetResult) -> dict[str, Any]:
