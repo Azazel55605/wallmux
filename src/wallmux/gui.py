@@ -270,6 +270,7 @@ class WallmuxWindow(QMainWindow):
         backend_page, backend_page_layout = self._settings_page()
         autoswitch_page, autoswitch_layout = self._settings_page()
         inhibition_page, inhibition_layout = self._settings_page()
+        notifications_page, notifications_layout = self._settings_page()
         hooks_page, hooks_page_layout = self._settings_page()
         transitions_page, transitions_layout = self._settings_page()
 
@@ -359,6 +360,24 @@ class WallmuxWindow(QMainWindow):
         inhibition_form.addRow("", save_inhibition_button)
         inhibition_layout.addWidget(inhibition_group)
         inhibition_layout.addStretch(1)
+
+        notifications_group = QGroupBox("Notifications")
+        notifications_form = QFormLayout(notifications_group)
+        self.notifications_enabled_check = QCheckBox("Enabled")
+        self.notify_switched_check = QCheckBox("Switched wallpaper")
+        self.notify_failed_check = QCheckBox("Switching failed")
+        self.notification_command_edit = QLineEdit()
+        self.notification_app_name_edit = QLineEdit()
+        notifications_form.addRow("", self.notifications_enabled_check)
+        notifications_form.addRow("", self.notify_switched_check)
+        notifications_form.addRow("", self.notify_failed_check)
+        notifications_form.addRow("Command", self.notification_command_edit)
+        notifications_form.addRow("App Name", self.notification_app_name_edit)
+        save_notifications_button = QPushButton("Save Notifications")
+        save_notifications_button.clicked.connect(self.save_notification_settings)
+        notifications_form.addRow("", save_notifications_button)
+        notifications_layout.addWidget(notifications_group)
+        notifications_layout.addStretch(1)
 
         self.folder_list = QListWidget()
         folders_group = QGroupBox("Wallpaper Folders")
@@ -517,6 +536,7 @@ class WallmuxWindow(QMainWindow):
         self.settings_tabs.addTab(backend_page, "Backends")
         self.settings_tabs.addTab(autoswitch_page, "Auto")
         self.settings_tabs.addTab(inhibition_page, "Inhibition")
+        self.settings_tabs.addTab(notifications_page, "Notifications")
         self.settings_tabs.addTab(hooks_page, "Hooks")
         self.settings_tabs.addTab(transitions_page, "Transitions")
 
@@ -814,6 +834,22 @@ class WallmuxWindow(QMainWindow):
             return
         self.status.showMessage("Inhibition saved and reloaded", 5000)
 
+    def save_notification_settings(self) -> None:
+        self.config["notifications"] = {
+            "enabled": self.notifications_enabled_check.isChecked(),
+            "switched_wallpaper": self.notify_switched_check.isChecked(),
+            "switching_failed": self.notify_failed_check.isChecked(),
+            "command": self.notification_command_edit.text(),
+            "app_name": self.notification_app_name_edit.text(),
+        }
+        write_config(self.config, user_config_file())
+        try:
+            send_request({"command": "reload"})
+        except DaemonUnavailable:
+            self.status.showMessage("Notifications saved; wallmuxd is not running", 6000)
+            return
+        self.status.showMessage("Notifications saved and reloaded", 5000)
+
     def autoswitch_now(self) -> None:
         request = {
             "command": "autoswitch-now",
@@ -842,6 +878,7 @@ class WallmuxWindow(QMainWindow):
         self.refresh_backend_settings()
         self.refresh_autoswitch_settings()
         self.refresh_inhibition_settings()
+        self.refresh_notification_settings()
         self.refresh_transition_settings()
 
     def refresh_gui_settings(self) -> None:
@@ -893,6 +930,16 @@ class WallmuxWindow(QMainWindow):
         self.inhibition_title_patterns_edit.setPlainText(
             "\n".join(inhibition.get("title_patterns", []))
         )
+
+    def refresh_notification_settings(self) -> None:
+        notifications = self.config.get("notifications", {})
+        self.notifications_enabled_check.setChecked(bool(notifications.get("enabled", True)))
+        self.notify_switched_check.setChecked(
+            bool(notifications.get("switched_wallpaper", True))
+        )
+        self.notify_failed_check.setChecked(bool(notifications.get("switching_failed", True)))
+        self.notification_command_edit.setText(str(notifications.get("command", "notify-send")))
+        self.notification_app_name_edit.setText(str(notifications.get("app_name", "Wallmux")))
 
     def _pattern_lines(self, text_edit: QTextEdit) -> list[str]:
         return [

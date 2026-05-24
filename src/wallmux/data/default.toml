@@ -76,6 +76,13 @@ process_names = ["gamescope", "gamemode", "wine64", "wineserver"]
 class_patterns = []
 title_patterns = []
 
+[notifications]
+enabled = true
+switched_wallpaper = true
+switching_failed = true
+command = "notify-send"
+app_name = "Wallmux"
+
 [daemon]
 startup_restore_retry_seconds = 5.0
 

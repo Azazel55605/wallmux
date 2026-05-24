@@ -29,6 +29,7 @@ from wallmux.core.inhibition import (
 )
 from wallmux.core.ipc import default_socket_path
 from wallmux.core.monitors import get_focused_monitor, list_monitors
+from wallmux.core.notifications import notify_switch_failed, notify_wallpaper_switched
 from wallmux.core.process import pause_pid, pid_is_alive, resume_pid, terminate_pid
 from wallmux.core.state import load_state, save_state
 from wallmux.core.wallpaper import (
@@ -130,6 +131,7 @@ class WallmuxDaemon:
         except KeyError as error:
             return {"ok": False, "error": f"missing required field: {error.args[0]}"}
         except (ValueError, WallmuxError) as error:
+            notify_switch_failed(self.config, error)
             return {"ok": False, "error": str(error)}
 
     def cleanup_stale_pids(self) -> None:
@@ -158,7 +160,10 @@ class WallmuxDaemon:
         if now < self.next_autoswitch_at:
             return
         try:
-            self.autoswitch_once()
+            results = self.autoswitch_once()
+            notify_wallpaper_switched(self.config, results)
+        except (ValueError, WallmuxError) as error:
+            notify_switch_failed(self.config, error)
         finally:
             self.next_autoswitch_at = now + autoswitch_interval(self.config)
 
@@ -201,6 +206,7 @@ class WallmuxDaemon:
                 )
             ]
 
+        notify_wallpaper_switched(self.config, results)
         return {"ok": True, "results": [_serialize_result(result) for result in results]}
 
     def _handle_restore(self) -> dict[str, Any]:
@@ -210,6 +216,7 @@ class WallmuxDaemon:
             runner=self.runner,
             state_path=self.state_path,
         )
+        notify_wallpaper_switched(self.config, results)
         return {"ok": True, "results": [_serialize_result(result) for result in results]}
 
     def _handle_reload(self) -> dict[str, Any]:
@@ -225,6 +232,7 @@ class WallmuxDaemon:
             monitor=request.get("monitor"),
         )
         self.next_autoswitch_at = time.monotonic() + autoswitch_interval(self.config)
+        notify_wallpaper_switched(self.config, results)
         return {"ok": True, "results": [_serialize_result(result) for result in results]}
 
     def _handle_stop_video(self, request: dict[str, Any]) -> dict[str, Any]:

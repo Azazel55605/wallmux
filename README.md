@@ -177,6 +177,17 @@ title_patterns = []
 
 Process names are checked with `pgrep -x`. Class/title patterns are optional regular expressions matched against Hyprland clients from `hyprctl clients -j`.
 
+Desktop notifications use `notify-send` by default:
+
+```toml
+[notifications]
+enabled = true
+switched_wallpaper = true
+switching_failed = true
+command = "notify-send"
+app_name = "Wallmux"
+```
+
 The default `mpvpaper` options ignore the user's mpv config, suppress mpv status output, crop/fill mixed aspect-ratio monitors, and use cheaper scaling for large videos:
 
 ```toml

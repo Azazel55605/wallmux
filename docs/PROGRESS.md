@@ -190,3 +190,4 @@ Record notable checks here as the project moves.
 - 2026-05-24: Optimized multi-monitor video -> image switching by terminating tracked video processes concurrently before issuing one grouped image backend command.
 - 2026-05-24: Added default basic transition orchestration for video -> image by setting images before stopping old video processes, with GUI toggles and custom transition effects still available.
 - 2026-05-24: Added inhibition rules for fullscreen clients and running process names, pausing auto switching and tracked video wallpaper processes while games/rendering tasks are active without blocking merely open launchers.
+- 2026-05-24: Added toggleable desktop notifications for successful wallpaper switches and switching failures through `notify-send`.
