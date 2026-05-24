@@ -1,0 +1,13 @@
+[Unit]
+Description=Wallmux wallpaper daemon
+Documentation=https://github.com/wallmux/wallmux
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/wallmuxd
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

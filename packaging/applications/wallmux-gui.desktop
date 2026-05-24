@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Wallmux
+Comment=Hyprland wallpaper manager and backend orchestrator
+Exec=wallmux-gui
+Icon=wallmux
+Terminal=false
+Categories=Settings;Utility;
+Keywords=wallpaper;hyprland;wayland;
+StartupNotify=true
+StartupWMClass=wallmux-gui

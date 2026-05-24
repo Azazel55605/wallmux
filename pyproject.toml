@@ -43,6 +43,8 @@ include = [
   "tests",
   "config/default.toml",
   "docs",
+  "packaging",
+  "LICENSE",
   "README.md",
   "pyproject.toml",
 ]

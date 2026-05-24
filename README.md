@@ -251,3 +251,27 @@ For active-environment pip testing:
 make install
 make uninstall
 ```
+
+## Desktop Integration
+
+For local `pipx` testing:
+
+```bash
+make install-desktop
+make install-service
+systemctl --user enable --now wallmux.service
+```
+
+Hyprland startup:
+
+```ini
+exec-once = systemctl --user start wallmux.service
+```
+
+Hyprland 0.55 Lua:
+
+```lua
+hl.exec_cmd("systemctl --user start wallmux.service")
+```
+
+Packaging assets live in `packaging/`, including a desktop file, icon, systemd user service, and Arch `PKGBUILD` template.

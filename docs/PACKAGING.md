@@ -84,6 +84,103 @@ ruff check .
 twine check dist/*
 ```
 
+## Desktop Integration
+
+Wallmux ships a desktop entry and app icon under `packaging/`.
+
+For local pipx testing, install them into the user data directory:
+
+```bash
+make install-desktop
+```
+
+Remove them again with:
+
+```bash
+make uninstall-desktop
+```
+
+The desktop entry is:
+
+```text
+packaging/applications/wallmux-gui.desktop
+```
+
+The icon is:
+
+```text
+packaging/icons/wallmux.svg
+```
+
+The GUI Wayland app id is `wallmux-gui`, matching the desktop file basename.
+
+## systemd User Service
+
+The Arch package installs:
+
+```text
+/usr/lib/systemd/user/wallmux.service
+```
+
+Enable and start it:
+
+```bash
+systemctl --user enable --now wallmux.service
+```
+
+For local pipx testing, install a user-local service that points at
+`~/.local/bin/wallmuxd`:
+
+```bash
+make install-service
+systemctl --user enable --now wallmux.service
+```
+
+Remove it with:
+
+```bash
+make uninstall-service
+```
+
+## Hyprland Startup
+
+Recommended Hyprland startup command:
+
+```ini
+exec-once = systemctl --user start wallmux.service
+```
+
+For Hyprland 0.55 Lua config:
+
+```lua
+hl.exec_cmd("systemctl --user start wallmux.service")
+```
+
+The daemon has retryable startup restore behavior, so it can start near
+`awww-daemon` without exiting if the backend is not ready yet.
+
+## Arch / AUR Packaging
+
+An Arch packaging template lives at:
+
+```text
+packaging/arch/PKGBUILD
+```
+
+Before submitting to the AUR:
+
+- Replace the placeholder GitHub `url` and `source` with the real upstream.
+- Replace `sha256sums=("SKIP")` with the real release archive checksum.
+- Build with `makepkg -si`.
+- Run `namcap` against the package and `PKGBUILD`.
+
+Useful local check:
+
+```bash
+cd packaging/arch
+makepkg --printsrcinfo > .SRCINFO
+```
+
 ## Install Built Wheel
 
 Recommended for end users:
