@@ -262,12 +262,16 @@ class WallmuxWindow(QMainWindow):
     def _build_settings_tab(self) -> None:
         tab = QWidget()
         outer = QVBoxLayout(tab)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        scroll.setWidget(content)
-        outer.addWidget(scroll)
+        self.settings_tabs = QTabWidget()
+        outer.addWidget(self.settings_tabs)
+
+        general_page, general_layout = self._settings_page()
+        library_page, library_layout = self._settings_page()
+        backend_page, backend_page_layout = self._settings_page()
+        autoswitch_page, autoswitch_layout = self._settings_page()
+        inhibition_page, inhibition_layout = self._settings_page()
+        hooks_page, hooks_page_layout = self._settings_page()
+        transitions_page, transitions_layout = self._settings_page()
 
         self.config_path_label = QLabel(str(user_config_file()))
         self.config_path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -280,11 +284,16 @@ class WallmuxWindow(QMainWindow):
         self.zen_mode_check.toggled.connect(self.set_zen_mode)
         general_form.addRow("", self.zen_mode_check)
 
+        self.close_after_set_check = QCheckBox("Close after setting wallpaper")
+        self.close_after_set_check.toggled.connect(self.set_close_after_set)
+        general_form.addRow("", self.close_after_set_check)
+
         self.all_monitor_mode_box = QComboBox()
         self.all_monitor_mode_box.addItem("All at the same time", "simultaneous")
         self.all_monitor_mode_box.addItem("One by one", "sequential")
         general_form.addRow("All Monitors", self.all_monitor_mode_box)
-        layout.addWidget(general_group)
+        general_layout.addWidget(general_group)
+        general_layout.addStretch(1)
 
         autoswitch_group = QGroupBox("Auto Switching")
         autoswitch_form = QFormLayout(autoswitch_group)
@@ -318,7 +327,8 @@ class WallmuxWindow(QMainWindow):
         autoswitch_buttons.addWidget(self.autoswitch_now_button)
         autoswitch_buttons.addStretch(1)
         autoswitch_form.addRow("", autoswitch_buttons)
-        layout.addWidget(autoswitch_group)
+        autoswitch_layout.addWidget(autoswitch_group)
+        autoswitch_layout.addStretch(1)
 
         inhibition_group = QGroupBox("Inhibition")
         inhibition_form = QFormLayout(inhibition_group)
@@ -347,7 +357,8 @@ class WallmuxWindow(QMainWindow):
         save_inhibition_button = QPushButton("Save Inhibition")
         save_inhibition_button.clicked.connect(self.save_inhibition_settings)
         inhibition_form.addRow("", save_inhibition_button)
-        layout.addWidget(inhibition_group)
+        inhibition_layout.addWidget(inhibition_group)
+        inhibition_layout.addStretch(1)
 
         self.folder_list = QListWidget()
         folders_group = QGroupBox("Wallpaper Folders")
@@ -363,7 +374,8 @@ class WallmuxWindow(QMainWindow):
         buttons.addWidget(remove_button)
         buttons.addStretch(1)
         folders_layout.addLayout(buttons)
-        layout.addWidget(folders_group)
+        library_layout.addWidget(folders_group)
+        library_layout.addStretch(1)
 
         backend_group = QGroupBox("Backend Defaults")
         backend_layout = QVBoxLayout(backend_group)
@@ -449,7 +461,8 @@ class WallmuxWindow(QMainWindow):
         save_backend_button = QPushButton("Save Backend Defaults")
         save_backend_button.clicked.connect(self.save_backend_settings)
         backend_layout.addWidget(save_backend_button)
-        layout.addWidget(backend_group)
+        backend_page_layout.addWidget(backend_group)
+        backend_page_layout.addStretch(1)
 
         self.hook_log_view = QTextEdit()
         self.hook_log_view.setReadOnly(True)
@@ -464,7 +477,8 @@ class WallmuxWindow(QMainWindow):
         hook_buttons.addWidget(refresh_hooks_button)
         hook_buttons.addStretch(1)
         hooks_layout.addLayout(hook_buttons)
-        layout.addWidget(hooks_group)
+        hooks_page_layout.addWidget(hooks_group)
+        hooks_page_layout.addStretch(1)
 
         transition_form = QFormLayout()
         self.basic_transitions_check = QCheckBox("Basic transitions")
@@ -491,16 +505,32 @@ class WallmuxWindow(QMainWindow):
         transition_form.addRow("Effect Timeout", self.transition_effect_timeout_spin)
         transition_group = QGroupBox("Transition Effects")
         transition_group.setLayout(transition_form)
-        layout.addWidget(transition_group)
+        transitions_layout.addWidget(transition_group)
 
         save_transitions_button = QPushButton("Save Transition Effects")
         save_transitions_button.clicked.connect(self.save_transition_settings)
-        layout.addWidget(save_transitions_button)
-        layout.addStretch(1)
+        transitions_layout.addWidget(save_transitions_button)
+        transitions_layout.addStretch(1)
+
+        self.settings_tabs.addTab(general_page, "General")
+        self.settings_tabs.addTab(library_page, "Library")
+        self.settings_tabs.addTab(backend_page, "Backends")
+        self.settings_tabs.addTab(autoswitch_page, "Auto")
+        self.settings_tabs.addTab(inhibition_page, "Inhibition")
+        self.settings_tabs.addTab(hooks_page, "Hooks")
+        self.settings_tabs.addTab(transitions_page, "Transitions")
 
         self.tabs.addTab(tab, "Settings")
         self.refresh_settings()
         self.refresh_hook_log()
+
+    def _settings_page(self) -> tuple[QWidget, QVBoxLayout]:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        scroll.setWidget(content)
+        return scroll, layout
 
     def _load_initial_folder(self) -> None:
         dirs = self.config.get("general", {}).get("wallpaper_dirs", [])
@@ -604,6 +634,7 @@ class WallmuxWindow(QMainWindow):
             if not response.get("ok"):
                 raise WallmuxError(response.get("error", "unknown daemon error"))
             self._show_set_results(response["results"])
+            self._close_after_successful_set()
         except DaemonUnavailable:
             try:
                 if monitor == ALL_MONITORS:
@@ -634,6 +665,7 @@ class WallmuxWindow(QMainWindow):
                     for result in results
                 ]
             )
+            self._close_after_successful_set()
         except WallmuxError as error:
             QMessageBox.critical(self, "Wallmux", str(error))
 
@@ -806,10 +838,17 @@ class WallmuxWindow(QMainWindow):
         self.folder_list.clear()
         for folder in self.config.get("general", {}).get("wallpaper_dirs", []):
             self.folder_list.addItem(folder)
+        self.refresh_gui_settings()
         self.refresh_backend_settings()
         self.refresh_autoswitch_settings()
         self.refresh_inhibition_settings()
         self.refresh_transition_settings()
+
+    def refresh_gui_settings(self) -> None:
+        gui = self.config.get("gui", {})
+        self.close_after_set_check.blockSignals(True)
+        self.close_after_set_check.setChecked(bool(gui.get("close_after_set", False)))
+        self.close_after_set_check.blockSignals(False)
 
     def refresh_daemon_status(self, running: bool | None = None) -> None:
         if running is None:
@@ -1019,6 +1058,14 @@ class WallmuxWindow(QMainWindow):
         if persist:
             self.config.setdefault("gui", {})["zen_mode"] = enabled
             write_config(self.config, user_config_file())
+
+    def set_close_after_set(self, enabled: bool) -> None:
+        self.config.setdefault("gui", {})["close_after_set"] = enabled
+        write_config(self.config, user_config_file())
+
+    def _close_after_successful_set(self) -> None:
+        if self.close_after_set_check.isChecked():
+            self.close()
 
     def queue_thumbnail(self, item: WallpaperItem) -> None:
         key = str(item.path)
