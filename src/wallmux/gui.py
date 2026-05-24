@@ -1206,6 +1206,7 @@ def main() -> int:
         app.setApplicationName(APP_ID)
         app.setApplicationDisplayName("Wallmux")
         app.setDesktopFileName(APP_ID)
+        app.setWindowIcon(_app_icon(app))
 
         if theme_debug:
             _print_theme_debug(app)
@@ -1234,6 +1235,16 @@ def _print_theme_debug(app: QApplication) -> None:
     print("library paths:")
     for path in QApplication.libraryPaths():
         print(f"  {path}")
+
+
+def _app_icon(app: QApplication) -> QIcon:
+    icon = QIcon.fromTheme("wallmux-gui")
+    if not icon.isNull():
+        return icon
+    icon = QIcon.fromTheme("wallmux")
+    if not icon.isNull():
+        return icon
+    return app.style().standardIcon(QStyle.SP_DesktopIcon)
 
 
 if __name__ == "__main__":
