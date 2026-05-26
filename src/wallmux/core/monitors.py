@@ -12,6 +12,10 @@ class Monitor:
     name: str
     focused: bool = False
     description: str | None = None
+    width: int | None = None
+    height: int | None = None
+    refresh_rate: float | None = None
+    scale: float | None = None
 
 
 def list_monitors() -> list[Monitor]:
@@ -30,6 +34,10 @@ def list_monitors() -> list[Monitor]:
             name=monitor["name"],
             focused=bool(monitor.get("focused", False)),
             description=monitor.get("description"),
+            width=_optional_int(monitor.get("width")),
+            height=_optional_int(monitor.get("height")),
+            refresh_rate=_optional_float(monitor.get("refreshRate")),
+            scale=_optional_float(monitor.get("scale")),
         )
         for monitor in monitors
     ]
@@ -40,3 +48,17 @@ def get_focused_monitor(monitors: list[Monitor] | None = None) -> Monitor | None
         if monitor.focused:
             return monitor
     return None
+
+
+def _optional_int(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

@@ -27,11 +27,20 @@ from wallmux.core.profiles import (
     switch_profile,
 )
 from wallmux.core.thumbnails import ensure_thumbnail
+from wallmux.core.video import (
+    configured_video_cache_dir,
+    configured_video_profile,
+    format_video_library_optimization_result,
+    format_video_optimization_result,
+    optimize_video,
+    optimize_video_library,
+    optimized_video_for_source,
+)
 from wallmux.core.wallpaper import WallmuxError, set_wallpaper, set_wallpaper_for_all
 
 try:
     from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal, Slot
-    from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPixmap
+    from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPen, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
@@ -141,6 +150,87 @@ class ThumbnailTask(QRunnable):
         self.signals.loaded.emit(str(self.item.path), str(thumbnail))
 
 
+class VideoOptimizeSignals(QObject):
+    progress = Signal(str)
+    source_progress = Signal(str, float, str)
+    source_done = Signal(str, str)
+    source_failed = Signal(str, str)
+    finished = Signal(str)
+    failed = Signal(str)
+
+
+class VideoOptimizeTask(QRunnable):
+    def __init__(
+        self,
+        items: list[WallpaperItem],
+        *,
+        profile: str,
+        force: bool,
+        library: bool,
+        config: dict,
+    ) -> None:
+        super().__init__()
+        self.setAutoDelete(False)
+        self.items = items
+        self.profile = profile
+        self.force = force
+        self.library = library
+        self.config = config
+        self.signals = VideoOptimizeSignals()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            if self.library:
+                result = optimize_video_library(
+                    self.items,
+                    profile=self.profile,
+                    force=self.force,
+                    config=self.config,
+                    progress_callback=self._library_progress,
+                )
+                for item in result.optimized:
+                    self.signals.source_done.emit(str(item.plan.source), item.message)
+                for item in result.skipped:
+                    self.signals.source_done.emit(str(item.plan.source), item.message)
+                for item in result.failed:
+                    self.signals.source_failed.emit(item["file"], item["error"])
+                self.signals.finished.emit(format_video_library_optimization_result(result))
+                return
+
+            result = optimize_video(
+                self.items[0].path,
+                profile=self.profile,
+                force=self.force,
+                config=self.config,
+                progress_callback=self._progress,
+            )
+            self.signals.source_done.emit(str(result.plan.source), result.message)
+            self.signals.finished.emit(format_video_optimization_result(result))
+        except Exception as error:  # pragma: no cover - defensive GUI boundary.
+            if self.items:
+                self.signals.source_failed.emit(str(self.items[0].path), str(error))
+            self.signals.failed.emit(str(error))
+
+    def _library_progress(self, path: Path, progress) -> None:
+        message = f"{path.name}: {_video_progress_text(progress)}"
+        self.signals.progress.emit(message)
+        self.signals.source_progress.emit(
+            str(path),
+            -1.0 if progress.percent is None else progress.percent,
+            message,
+        )
+
+    def _progress(self, progress) -> None:
+        message = _video_progress_text(progress)
+        self.signals.progress.emit(message)
+        self.signals.source_progress.emit(
+            str(self.items[0].path),
+            -1.0 if progress.percent is None else progress.percent,
+            message,
+        )
+
+
 class WallmuxWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -150,6 +240,9 @@ class WallmuxWindow(QMainWindow):
         self.selected_item: WallpaperItem | None = None
         self.pending_thumbnails: set[str] = set()
         self.thumbnail_tasks: dict[str, ThumbnailTask] = {}
+        self.thumbnail_pixmaps: dict[str, QPixmap] = {}
+        self.video_optimize_tasks: dict[str, VideoOptimizeTask] = {}
+        self.video_optimize_state: dict[str, dict] = {}
         self.zen_mode = False
         self.daemon_running = False
         self.profile_settings_loading = False
@@ -333,6 +426,7 @@ class WallmuxWindow(QMainWindow):
         library_page, library_layout = self._settings_page()
         profiles_page, profiles_layout = self._settings_page()
         backend_page, backend_page_layout = self._settings_page()
+        video_page, video_layout = self._settings_page()
         autoswitch_page, autoswitch_layout = self._settings_page()
         inhibition_page, inhibition_layout = self._settings_page()
         notifications_page, notifications_layout = self._settings_page()
@@ -480,6 +574,49 @@ class WallmuxWindow(QMainWindow):
                 "Regular expressions matched against Hyprland window titles.",
             ),
             self.inhibition_title_patterns_edit,
+        )
+        self.battery_behavior_box = QComboBox()
+        self.battery_behavior_box.addItem("Keep videos", "keep")
+        self.battery_behavior_box.addItem("Pause videos", "pause-videos")
+        self.battery_behavior_box.addItem("Skip videos", "skip-videos")
+        self.battery_behavior_box.addItem("First frame", "first-frame")
+        self.battery_behavior_box.addItem("Pause all", "pause-all")
+        self.high_load_behavior_box = QComboBox()
+        self.high_load_behavior_box.addItem("Keep", "keep")
+        self.high_load_behavior_box.addItem("Pause videos", "pause-videos")
+        self.high_load_behavior_box.addItem("Pause auto switching", "pause-autoswitch")
+        self.high_load_behavior_box.addItem("Pause all", "pause-all")
+        self.cpu_load_threshold_spin = QDoubleSpinBox()
+        self.cpu_load_threshold_spin.setRange(0.0, 8.0)
+        self.cpu_load_threshold_spin.setSingleStep(0.05)
+        self.cpu_load_threshold_spin.setDecimals(2)
+        self.gpu_load_threshold_spin = QDoubleSpinBox()
+        self.gpu_load_threshold_spin.setRange(0.0, 100.0)
+        self.gpu_load_threshold_spin.setSingleStep(5.0)
+        self.gpu_load_threshold_spin.setDecimals(0)
+        self.sustained_seconds_spin = QDoubleSpinBox()
+        self.sustained_seconds_spin.setRange(0.0, 600.0)
+        self.sustained_seconds_spin.setSingleStep(5.0)
+        self.sustained_seconds_spin.setDecimals(1)
+        inhibition_form.addRow(
+            _form_label("Battery Behavior", "What to do with videos while on battery."),
+            self.battery_behavior_box,
+        )
+        inhibition_form.addRow(
+            _form_label("High Load Behavior", "What to do after sustained CPU/GPU load."),
+            self.high_load_behavior_box,
+        )
+        inhibition_form.addRow(
+            _form_label("CPU Threshold", "Load ratio per CPU core that counts as high load."),
+            self.cpu_load_threshold_spin,
+        )
+        inhibition_form.addRow(
+            _form_label("GPU Threshold", "NVIDIA GPU utilization percent for high-load mode."),
+            self.gpu_load_threshold_spin,
+        )
+        inhibition_form.addRow(
+            _form_label("Sustained Seconds", "How long high load must persist before inhibiting."),
+            self.sustained_seconds_spin,
         )
         save_inhibition_button = QPushButton("Save Inhibition")
         save_inhibition_button.clicked.connect(self.save_inhibition_settings)
@@ -983,6 +1120,94 @@ class WallmuxWindow(QMainWindow):
         backend_page_layout.addWidget(backend_group)
         backend_page_layout.addStretch(1)
 
+        video_group = QGroupBox("Video Optimization")
+        video_form = QFormLayout(video_group)
+        self.video_opt_enabled_check = QCheckBox("Auto cache videos")
+        self.video_prefer_optimized_check = QCheckBox("Prefer optimized videos when available")
+        self.video_opt_profile_box = QComboBox()
+        self.video_opt_profile_box.addItems(["compatibility", "balanced", "quality"])
+        self.video_cache_dir_edit = QLineEdit()
+        self.video_cache_dir_edit.setReadOnly(True)
+        self.video_cache_dir_edit.setToolTip(
+            "Wallmux uses its default optimized-video cache. "
+            "This path is informational and is not written as a config override."
+        )
+        self.video_codec_edit = QLineEdit()
+        self.video_codec_names_edit = QLineEdit()
+        self.video_container_edit = QLineEdit()
+        self.video_extension_edit = QLineEdit()
+        self.video_max_width_spin = QSpinBox()
+        self.video_max_width_spin.setRange(1, 16384)
+        self.video_max_height_spin = QSpinBox()
+        self.video_max_height_spin.setRange(1, 16384)
+        self.video_max_bitrate_spin = QSpinBox()
+        self.video_max_bitrate_spin.setRange(1, 1000)
+        self.video_crf_spin = QSpinBox()
+        self.video_crf_spin.setRange(0, 51)
+        self.video_preset_edit = QLineEdit()
+        self.video_extra_args_edit = QLineEdit()
+        video_form.addRow("", self.video_opt_enabled_check)
+        video_form.addRow("", self.video_prefer_optimized_check)
+        video_form.addRow(
+            _form_label("Profile", "Optimization preset used for CLI and GUI jobs."),
+            self.video_opt_profile_box,
+        )
+        video_form.addRow(
+            _form_label("Cache Dir", "Optional optimized video cache directory."),
+            self.video_cache_dir_edit,
+        )
+        video_form.addRow(_form_label("Codec", "ffmpeg video encoder."), self.video_codec_edit)
+        video_form.addRow(
+            _form_label("Codec Names", "Comma-separated codecs considered already suitable."),
+            self.video_codec_names_edit,
+        )
+        video_form.addRow(
+            _form_label("Container", "Target container name."),
+            self.video_container_edit,
+        )
+        video_form.addRow(
+            _form_label("Extension", "Output file extension."),
+            self.video_extension_edit,
+        )
+        video_form.addRow(
+            _form_label("Max Width", "Maximum optimized video width."),
+            self.video_max_width_spin,
+        )
+        video_form.addRow(
+            _form_label("Max Height", "Maximum optimized video height."),
+            self.video_max_height_spin,
+        )
+        video_form.addRow(
+            _form_label("Max Bitrate", "Maximum suitable bitrate in Mbps."),
+            self.video_max_bitrate_spin,
+        )
+        video_form.addRow(_form_label("CRF", "ffmpeg CRF quality value."), self.video_crf_spin)
+        video_form.addRow(_form_label("Preset", "ffmpeg encoder preset."), self.video_preset_edit)
+        video_form.addRow(
+            _form_label("Extra Args", "Additional ffmpeg arguments, shell-style."),
+            self.video_extra_args_edit,
+        )
+        video_buttons = QHBoxLayout()
+        save_video_button = QPushButton("Save Video Settings")
+        save_video_button.clicked.connect(self.save_video_settings)
+        optimize_selected_button = QPushButton("Optimize Selected")
+        optimize_selected_button.clicked.connect(self.optimize_selected_video)
+        optimize_library_button = QPushButton("Optimize Library")
+        optimize_library_button.clicked.connect(self.optimize_video_library_gui)
+        self.video_force_optimize_check = QCheckBox("Force")
+        video_buttons.addWidget(save_video_button)
+        video_buttons.addWidget(optimize_selected_button)
+        video_buttons.addWidget(optimize_library_button)
+        video_buttons.addWidget(self.video_force_optimize_check)
+        video_buttons.addStretch(1)
+        video_layout.addWidget(video_group)
+        video_layout.addLayout(video_buttons)
+        self.video_opt_log = QTextEdit()
+        self.video_opt_log.setReadOnly(True)
+        self.video_opt_log.setMinimumHeight(110)
+        video_layout.addWidget(self.video_opt_log)
+        video_layout.addStretch(1)
+
         self.hook_log_view = QTextEdit()
         self.hook_log_view.setReadOnly(True)
         self.hook_log_view.setMinimumHeight(140)
@@ -1059,6 +1284,7 @@ class WallmuxWindow(QMainWindow):
         self.settings_tabs.addTab(library_page, "Library")
         self.settings_tabs.addTab(profiles_page, "Profiles")
         self.settings_tabs.addTab(backend_page, "Backends")
+        self.settings_tabs.addTab(video_page, "Video")
         self.settings_tabs.addTab(autoswitch_page, "Auto")
         self.settings_tabs.addTab(inhibition_page, "Inhibition")
         self.settings_tabs.addTab(notifications_page, "Notifications")
@@ -1173,6 +1399,7 @@ class WallmuxWindow(QMainWindow):
             widget_item.setToolTip(str(item.path))
             self.grid.addItem(widget_item)
             self.queue_thumbnail(item)
+            self.queue_video_optimization(item)
 
         if self.grid.count() == 0:
             self.preview.setText("No wallpapers")
@@ -1197,6 +1424,7 @@ class WallmuxWindow(QMainWindow):
         )
         self._set_preview_pixmap(self._placeholder_pixmap(self.selected_item))
         self.queue_thumbnail(self.selected_item)
+        self.queue_video_optimization(self.selected_item)
         self.set_button.setEnabled(True)
 
     def set_selected_wallpaper(self) -> None:
@@ -1632,6 +1860,141 @@ class WallmuxWindow(QMainWindow):
             self.load_folder(self.current_folder)
         self.status.showMessage("Backend defaults saved", 5000)
 
+    def save_video_settings(self) -> None:
+        self.config["video_optimization"] = {
+            "enabled": self.video_opt_enabled_check.isChecked(),
+            "auto_optimize": self.video_opt_enabled_check.isChecked(),
+            "profile": self.video_opt_profile_box.currentText(),
+            "cache_dir": "",
+            "prefer_optimized": True,
+            "bulk_warning": True,
+            "codec": self.video_codec_edit.text(),
+            "codec_names": self._comma_values(self.video_codec_names_edit.text()),
+            "container": self.video_container_edit.text(),
+            "extension": self.video_extension_edit.text(),
+            "max_width": self.video_max_width_spin.value(),
+            "max_height": self.video_max_height_spin.value(),
+            "max_bit_rate": self.video_max_bitrate_spin.value() * 1_000_000,
+            "crf": self.video_crf_spin.value(),
+            "preset": self.video_preset_edit.text(),
+            "extra_args": self.video_extra_args_edit.text(),
+        }
+        write_config(self.config, user_config_file())
+        try:
+            send_request({"command": "reload"})
+        except DaemonUnavailable:
+            self.status.showMessage("Video settings saved; wallmuxd is not running", 6000)
+            return
+        self.status.showMessage("Video settings saved and reloaded", 5000)
+
+    def optimize_selected_video(self) -> None:
+        if (
+            self.selected_item is None
+            or self.selected_item.wallpaper_type is not WallpaperType.VIDEO
+        ):
+            QMessageBox.information(self, "Wallmux", "Select a video wallpaper first.")
+            return
+        self.save_video_settings()
+        self._start_video_optimize_task([self.selected_item], library=False)
+
+    def optimize_video_library_gui(self) -> None:
+        videos = [item for item in self.items if item.wallpaper_type is WallpaperType.VIDEO]
+        if not videos:
+            QMessageBox.information(self, "Wallmux", "No videos in the current library.")
+            return
+        if (
+            QMessageBox.question(
+                self,
+                "Wallmux",
+                f"Optimize {len(videos)} video(s)? This can take a while and use disk space.",
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        self.save_video_settings()
+        self._start_video_optimize_task(videos, library=True)
+
+    def _start_video_optimize_task(self, items: list[WallpaperItem], *, library: bool) -> None:
+        self.video_opt_log.clear()
+        task = VideoOptimizeTask(
+            items,
+            profile=self.video_opt_profile_box.currentText(),
+            force=self.video_force_optimize_check.isChecked(),
+            library=library,
+            config=self.config,
+        )
+        task.signals.progress.connect(self._video_optimize_progress)
+        task.signals.source_progress.connect(self._video_source_progress)
+        task.signals.source_done.connect(self._video_source_done)
+        task.signals.source_failed.connect(self._video_source_failed)
+        task.signals.finished.connect(self._video_optimize_finished)
+        task.signals.failed.connect(self._video_optimize_failed)
+        for item in items:
+            if item.wallpaper_type is WallpaperType.VIDEO:
+                self.video_optimize_tasks[str(item.path)] = task
+                self.video_optimize_state[str(item.path)] = {
+                    "status": "running",
+                    "percent": 0.0,
+                    "message": "queued",
+                }
+                self.update_video_item_icon(str(item.path))
+        self.status.showMessage("Video optimization started", 5000)
+        self.thread_pool.start(task)
+
+    def _video_optimize_progress(self, message: str) -> None:
+        self.video_opt_log.setPlainText(message)
+        self.status.showMessage(message, 3000)
+
+    def _video_source_progress(self, source_path: str, percent: float, message: str) -> None:
+        self.video_optimize_state[source_path] = {
+            "status": "running",
+            "percent": None if percent < 0 else percent,
+            "message": message,
+        }
+        self.update_video_item_icon(source_path)
+
+    def _video_source_done(self, source_path: str, message: str) -> None:
+        self._release_video_task_later(source_path)
+        self.video_optimize_state[source_path] = {
+            "status": "done",
+            "percent": 100.0,
+            "message": message,
+        }
+        self.update_video_item_icon(source_path)
+
+    def _video_source_failed(self, source_path: str, message: str) -> None:
+        self._release_video_task_later(source_path)
+        self.video_optimize_state[source_path] = {
+            "status": "failed",
+            "percent": None,
+            "message": message,
+        }
+        self.update_video_item_icon(source_path)
+
+    def _release_video_task_later(self, source_path: str) -> None:
+        task = self.video_optimize_tasks.get(source_path)
+        if task is None:
+            return
+        QTimer.singleShot(
+            1500,
+            lambda path=source_path, released_task=task: self._release_video_task(
+                path,
+                released_task,
+            ),
+        )
+
+    def _release_video_task(self, source_path: str, task: VideoOptimizeTask) -> None:
+        if self.video_optimize_tasks.get(source_path) is task:
+            self.video_optimize_tasks.pop(source_path, None)
+
+    def _video_optimize_finished(self, message: str) -> None:
+        self.video_opt_log.setPlainText(message)
+        self.status.showMessage("Video optimization finished", 6000)
+
+    def _video_optimize_failed(self, message: str) -> None:
+        self.video_opt_log.setPlainText(message)
+        QMessageBox.critical(self, "Wallmux", message)
+
     def save_autoswitch_settings(self) -> None:
         if self.autoswitch_enabled_check.isChecked() and not self.daemon_running:
             QMessageBox.warning(
@@ -1669,6 +2032,13 @@ class WallmuxWindow(QMainWindow):
             "process_names": self._pattern_lines(self.inhibition_process_names_edit),
             "class_patterns": self._pattern_lines(self.inhibition_class_patterns_edit),
             "title_patterns": self._pattern_lines(self.inhibition_title_patterns_edit),
+        }
+        self.config["resource_mode"] = {
+            "battery_behavior": self.battery_behavior_box.currentData(),
+            "high_load_behavior": self.high_load_behavior_box.currentData(),
+            "cpu_load_threshold": self.cpu_load_threshold_spin.value(),
+            "gpu_load_threshold": self.gpu_load_threshold_spin.value(),
+            "sustained_seconds": self.sustained_seconds_spin.value(),
         }
         write_config(self.config, user_config_file())
         try:
@@ -1723,6 +2093,7 @@ class WallmuxWindow(QMainWindow):
         self.refresh_gui_settings()
         self.refresh_profile_settings()
         self.refresh_backend_settings()
+        self.refresh_video_settings()
         self.refresh_autoswitch_settings()
         self.refresh_inhibition_settings()
         self.refresh_notification_settings()
@@ -1929,6 +2300,7 @@ class WallmuxWindow(QMainWindow):
         daemon = response.get("daemon", {})
         autoswitch = daemon.get("autoswitch", {})
         inhibition = daemon.get("inhibition", {})
+        resource_mode = daemon.get("resource_mode", {})
         schema_version = daemon.get("state_schema_version")
         lines = [
             "Daemon",
@@ -1969,6 +2341,14 @@ class WallmuxWindow(QMainWindow):
                 f"pause videos: {inhibition.get('pause_videos')}",
                 f"inhibit manual daemon commands: {inhibition.get('inhibit_manual_commands')}",
                 f"paused video pids: {inhibition.get('paused_video_pids', [])}",
+                "",
+                "Resource Mode",
+                f"battery: {resource_mode.get('battery_state', 'unknown')}",
+                f"battery behavior: {resource_mode.get('battery_behavior', 'keep')}",
+                f"cpu load ratio: {_state_value(resource_mode, 'cpu_load_ratio')}",
+                f"gpu load percent: {_state_value(resource_mode, 'gpu_load_percent')}",
+                f"high load: {resource_mode.get('high_load', False)}",
+                f"high load behavior: {resource_mode.get('high_load_behavior', 'keep')}",
                 "",
                 "Monitors",
             ]
@@ -2015,6 +2395,7 @@ class WallmuxWindow(QMainWindow):
 
     def refresh_inhibition_settings(self) -> None:
         inhibition = self.config.get("inhibition", {})
+        resource_mode = self.config.get("resource_mode", {})
         self.inhibition_enabled_check.setChecked(bool(inhibition.get("enabled", True)))
         self.inhibition_interval_spin.setValue(
             float(inhibition.get("check_interval_seconds", 5.0))
@@ -2036,6 +2417,17 @@ class WallmuxWindow(QMainWindow):
         self.inhibition_title_patterns_edit.setPlainText(
             "\n".join(inhibition.get("title_patterns", []))
         )
+        self._set_combo_data(
+            self.battery_behavior_box,
+            str(resource_mode.get("battery_behavior", "keep")),
+        )
+        self._set_combo_data(
+            self.high_load_behavior_box,
+            str(resource_mode.get("high_load_behavior", "keep")),
+        )
+        self.cpu_load_threshold_spin.setValue(float(resource_mode.get("cpu_load_threshold", 0.85)))
+        self.gpu_load_threshold_spin.setValue(float(resource_mode.get("gpu_load_threshold", 85.0)))
+        self.sustained_seconds_spin.setValue(float(resource_mode.get("sustained_seconds", 15.0)))
 
     def refresh_notification_settings(self) -> None:
         notifications = self.config.get("notifications", {})
@@ -2095,6 +2487,32 @@ class WallmuxWindow(QMainWindow):
         self.mpvpaper_options_edit.setText(str(mpvpaper.get("options", "")))
         gslapper = backends.get("gslapper", {})
         self.gslapper_command_edit.setText(str(gslapper.get("command", "gslapper")))
+
+    def refresh_video_settings(self) -> None:
+        video = self.config.get("video_optimization", {})
+        auto_optimize = bool(video.get("auto_optimize", video.get("enabled", True)))
+        self.video_opt_enabled_check.setChecked(auto_optimize)
+        self.video_prefer_optimized_check.setChecked(bool(video.get("prefer_optimized", True)))
+        self.video_prefer_optimized_check.setEnabled(False)
+        self.video_opt_profile_box.setCurrentText(str(video.get("profile", "balanced")))
+        self.video_cache_dir_edit.setText(str(configured_video_cache_dir(self.config)))
+        self.video_codec_edit.setText(str(video.get("codec", "libx264")))
+        self.video_codec_names_edit.setText(
+            ", ".join(str(item) for item in video.get("codec_names", ["h264"]))
+        )
+        self.video_container_edit.setText(str(video.get("container", "mp4")))
+        self.video_extension_edit.setText(str(video.get("extension", ".mp4")))
+        self.video_max_width_spin.setValue(int(video.get("max_width", 2560)))
+        self.video_max_height_spin.setValue(int(video.get("max_height", 1440)))
+        self.video_max_bitrate_spin.setValue(
+            max(1, int(video.get("max_bit_rate", 45_000_000)) // 1_000_000)
+        )
+        self.video_crf_spin.setValue(int(video.get("crf", 22)))
+        self.video_preset_edit.setText(str(video.get("preset", "medium")))
+        extra_args = video.get("extra_args", ["-pix_fmt", "yuv420p", "-movflags", "+faststart"])
+        if isinstance(extra_args, list):
+            extra_args = " ".join(str(item) for item in extra_args)
+        self.video_extra_args_edit.setText(str(extra_args))
 
     def _load_image_backend_settings(self, backend: str, backend_config: dict) -> None:
         if backend == "awww":
@@ -2270,13 +2688,53 @@ class WallmuxWindow(QMainWindow):
         task.signals.failed.connect(self.finish_thumbnail)
         self.thread_pool.start(task)
 
+    def queue_video_optimization(self, item: WallpaperItem) -> None:
+        if item.wallpaper_type is not WallpaperType.VIDEO:
+            return
+        video_config = self.config.get("video_optimization", {})
+        if not bool(video_config.get("auto_optimize", video_config.get("enabled", True))):
+            return
+        key = str(item.path)
+        if key in self.video_optimize_tasks:
+            return
+        if optimized_video_for_source(item.path, self.config) is not None:
+            self.video_optimize_state[key] = {
+                "status": "done",
+                "percent": 100.0,
+                "message": "cached",
+            }
+            self.update_video_item_icon(key)
+            return
+        task = VideoOptimizeTask(
+            [item],
+            profile=configured_video_profile(self.config),
+            force=False,
+            library=False,
+            config=self.config,
+        )
+        task.signals.progress.connect(self._video_optimize_progress)
+        task.signals.source_progress.connect(self._video_source_progress)
+        task.signals.source_done.connect(self._video_source_done)
+        task.signals.source_failed.connect(self._video_source_failed)
+        task.signals.finished.connect(lambda _message: None)
+        task.signals.failed.connect(lambda _message: None)
+        self.video_optimize_tasks[key] = task
+        self.video_optimize_state[key] = {
+            "status": "running",
+            "percent": 0.0,
+            "message": "queued",
+        }
+        self.update_video_item_icon(key)
+        self.thread_pool.start(task)
+
     def apply_thumbnail(self, source_path: str, thumbnail_path: str) -> None:
         self.finish_thumbnail(source_path)
         pixmap = QPixmap(thumbnail_path)
         if pixmap.isNull():
             return
 
-        icon = QIcon(pixmap)
+        self.thumbnail_pixmaps[source_path] = pixmap
+        icon = QIcon(self._video_overlay_pixmap(source_path, pixmap))
         for index in range(self.grid.count()):
             widget_item = self.grid.item(index)
             item = widget_item.data(Qt.ItemDataRole.UserRole)
@@ -2289,6 +2747,65 @@ class WallmuxWindow(QMainWindow):
     def finish_thumbnail(self, source_path: str) -> None:
         self.pending_thumbnails.discard(source_path)
         self.thumbnail_tasks.pop(source_path, None)
+
+    def update_video_item_icon(self, source_path: str) -> None:
+        pixmap = self.thumbnail_pixmaps.get(source_path)
+        if pixmap is None:
+            return
+        icon = QIcon(self._video_overlay_pixmap(source_path, pixmap))
+        for index in range(self.grid.count()):
+            widget_item = self.grid.item(index)
+            item = widget_item.data(Qt.ItemDataRole.UserRole)
+            if str(item.path) == source_path:
+                widget_item.setIcon(icon)
+
+    def _video_overlay_pixmap(self, source_path: str, pixmap: QPixmap) -> QPixmap:
+        state = self.video_optimize_state.get(source_path)
+        if not state:
+            return pixmap
+        overlay = QPixmap(pixmap)
+        painter = QPainter(overlay)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        status = state.get("status")
+        if status == "running":
+            percent = state.get("percent")
+            width = overlay.width()
+            bar_width = width if percent is None else int(width * (float(percent) / 100.0))
+            pen_bg = QPen(QColor("#101827"))
+            pen_bg.setWidth(6)
+            pen_fg = QPen(QColor("#2563ff"))
+            pen_fg.setWidth(6)
+            y = max(4, overlay.height() - 5)
+            painter.setPen(pen_bg)
+            painter.drawLine(0, y, width, y)
+            painter.setPen(pen_fg)
+            painter.drawLine(0, y, bar_width, y)
+        elif status == "done":
+            size = max(28, int(min(overlay.width(), overlay.height()) * 0.24))
+            left = max(6, int(size * 0.25))
+            top = max(6, int(size * 0.18))
+            pen_shadow = QPen(QColor("#020617"))
+            pen_shadow.setWidth(max(6, size // 6))
+            pen_shadow.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen_shadow.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            pen_fg = QPen(QColor("#22c55e"))
+            pen_fg.setWidth(max(4, size // 9))
+            pen_fg.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen_fg.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            points = [
+                (left, top + int(size * 0.55)),
+                (left + int(size * 0.32), top + int(size * 0.88)),
+                (left + int(size * 0.95), top + int(size * 0.15)),
+            ]
+            for pen in (pen_shadow, pen_fg):
+                painter.setPen(pen)
+                painter.drawLine(*points[0], *points[1])
+                painter.drawLine(*points[1], *points[2])
+        elif status == "failed":
+            painter.setPen(QPen(QColor("#ef4444"), 3))
+            painter.drawText(8, 26, "!")
+        painter.end()
+        return overlay
 
     def _set_preview_pixmap(self, pixmap: QPixmap) -> None:
         self.preview.setPixmap(
@@ -2543,6 +3060,25 @@ def _format_seconds(value) -> str:
         return f"{float(value):.1f}s"
     except (TypeError, ValueError):
         return str(value)
+
+
+def _video_progress_text(progress) -> str:
+    percent = progress.percent
+    percent_text = "?" if percent is None else f"{percent:.1f}%"
+    size_text = _format_bytes(progress.total_size)
+    speed = f" {progress.speed}" if progress.speed else ""
+    return f"{percent_text} {size_text}{speed}"
+
+
+def _format_bytes(value) -> str:
+    if value is None:
+        return "unknown"
+    amount = float(value)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if amount < 1024 or unit == "TiB":
+            return f"{amount:.1f} {unit}"
+        amount /= 1024
+    return str(value)
 
 
 def _help_marker(tooltip: str) -> QLabel:

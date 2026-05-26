@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sys
+import time
 from pathlib import Path
 
 from wallmux.backends.routing import route_wallpaper
@@ -17,6 +20,24 @@ from wallmux.core.profiles import (
     get_active_profile,
     list_profiles,
     switch_profile,
+)
+from wallmux.core.video import (
+    VideoInspectionError,
+    VideoOptimizationProgress,
+    configured_video_profile,
+    estimated_optimization_input_size,
+    format_video_inspection,
+    format_video_library_optimization_result,
+    format_video_optimization_plan,
+    format_video_optimization_result,
+    inspect_video,
+    optimize_video,
+    optimize_video_library,
+    plan_video_optimization,
+    video_inspection_json,
+    video_library_optimization_result_json,
+    video_optimization_plan_json,
+    video_optimization_result_json,
 )
 from wallmux.core.wallpaper import (
     WallmuxError,
@@ -109,6 +130,66 @@ def build_parser() -> argparse.ArgumentParser:
         help="Limit checks to a specific area.",
     )
     doctor.add_argument("--json", action="store_true", help="Print checks as JSON.")
+
+    video = subparsers.add_parser("video", help="Inspect or optimize video wallpapers.")
+    video_subparsers = video.add_subparsers(dest="video_command", required=True)
+    video_inspect = video_subparsers.add_parser("inspect", help="Inspect video metadata.")
+    video_inspect.add_argument("file", type=Path)
+    video_inspect.add_argument("--json", action="store_true", help="Print metadata as JSON.")
+    video_plan = video_subparsers.add_parser("plan", help="Plan video optimization.")
+    video_plan.add_argument("file", type=Path)
+    video_plan.add_argument(
+        "--profile",
+        choices=["compatibility", "balanced", "quality"],
+        default="balanced",
+    )
+    video_plan.add_argument("--json", action="store_true", help="Print plan as JSON.")
+    video_optimize = video_subparsers.add_parser(
+        "optimize",
+        help="Optimize a video wallpaper into the cache.",
+    )
+    video_optimize.add_argument("file", type=Path)
+    video_optimize.add_argument(
+        "--profile",
+        choices=["compatibility", "balanced", "quality"],
+        default="balanced",
+    )
+    video_optimize.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the optimization plan without running ffmpeg.",
+    )
+    video_optimize.add_argument(
+        "--force",
+        action="store_true",
+        help="Optimize even when the source already matches the selected profile.",
+    )
+    video_optimize.add_argument("--json", action="store_true", help="Print plan as JSON.")
+    video_optimize_library = video_subparsers.add_parser(
+        "optimize-library",
+        help="Optimize all video wallpapers in the active library.",
+    )
+    video_optimize_library.add_argument(
+        "--profile",
+        choices=["compatibility", "balanced", "quality"],
+        default=None,
+    )
+    video_optimize_library.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the bulk plan without running ffmpeg.",
+    )
+    video_optimize_library.add_argument(
+        "--force",
+        action="store_true",
+        help="Optimize even when a source already matches the selected profile.",
+    )
+    video_optimize_library.add_argument(
+        "--yes",
+        action="store_true",
+        help="Confirm the bulk operation.",
+    )
+    video_optimize_library.add_argument("--json", action="store_true", help="Print JSON.")
 
     return parser
 
@@ -266,6 +347,14 @@ def main(argv: list[str] | None = None) -> int:
             f"manual_commands={inhibition.get('inhibit_manual_commands')} "
             f"reason={inhibition.get('reason') or 'none'}"
         )
+        resource_mode = daemon.get("resource_mode", {})
+        print(
+            "resource_mode: "
+            f"battery={resource_mode.get('battery_state', 'unknown')} "
+            f"battery_behavior={resource_mode.get('battery_behavior', 'keep')} "
+            f"high_load={resource_mode.get('high_load', False)} "
+            f"high_load_behavior={resource_mode.get('high_load_behavior', 'keep')}"
+        )
         if daemon.get("last_error"):
             last_error = daemon["last_error"]
             print(f"last_error: {last_error.get('message')}: {last_error.get('error')}")
@@ -295,6 +384,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(format_doctor_report(report))
         return 1 if report.has_errors else 0
+
+    if args.command == "video":
+        return _handle_video(args)
 
     return 1
 
@@ -409,6 +501,95 @@ def _handle_profile(args) -> int:
     return 0
 
 
+def _handle_video(args) -> int:
+    if args.video_command == "inspect":
+        try:
+            inspection = inspect_video(args.file)
+        except VideoInspectionError as error:
+            print(f"wallmuxctl: {error}")
+            return 1
+        if args.json:
+            print(video_inspection_json(inspection))
+        else:
+            print(format_video_inspection(inspection))
+        return 0
+    if args.video_command in {"plan", "optimize"}:
+        if args.video_command == "optimize" and not args.dry_run:
+            config = load_config()
+            try:
+                progress = None if args.json else _video_progress_printer()
+                result = optimize_video(
+                    args.file,
+                    profile=args.profile,
+                    force=args.force,
+                    config=config,
+                    progress_callback=progress,
+                )
+            except VideoInspectionError as error:
+                print(f"wallmuxctl: {error}")
+                return 1
+            if progress is not None:
+                print(file=sys.stderr)
+            if args.json:
+                print(video_optimization_result_json(result))
+            else:
+                print(format_video_optimization_result(result))
+            return 0
+        try:
+            plan = plan_video_optimization(args.file, profile=args.profile, config=load_config())
+        except VideoInspectionError as error:
+            print(f"wallmuxctl: {error}")
+            return 1
+        if args.json:
+            print(video_optimization_plan_json(plan))
+        else:
+            print(format_video_optimization_plan(plan))
+        return 0
+    if args.video_command == "optimize-library":
+        config = effective_config_for_profile(load_config())
+        profile = args.profile or configured_video_profile(config)
+        items = load_wallpaper_library(config)
+        video_count = sum(1 for item in items if item.wallpaper_type.value == "video")
+        input_size = estimated_optimization_input_size(items)
+        if args.dry_run:
+            payload = {
+                "profile": profile,
+                "videos": video_count,
+                "estimated_input_size": input_size,
+            }
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print(f"profile: {profile}")
+                print(f"videos: {video_count}")
+                print(f"estimated input: {_format_cli_bytes(input_size)}")
+            return 0
+        if not args.yes:
+            print(
+                "wallmuxctl: optimize-library can take a long time and use significant "
+                "disk space; rerun with --yes to confirm"
+            )
+            print(f"videos: {video_count}")
+            print(f"estimated input: {_format_cli_bytes(input_size)}")
+            return 1
+        progress = None if args.json else _video_library_progress_printer()
+        result = optimize_video_library(
+            items,
+            profile=profile,
+            force=args.force,
+            config=config,
+            progress_callback=progress,
+        )
+        if progress is not None:
+            print(file=sys.stderr)
+        if args.json:
+            print(video_library_optimization_result_json(result))
+        else:
+            print(format_video_library_optimization_result(result))
+        return 0
+    return 1
+
+
 def _daemon_running() -> bool:
     try:
         response = send_request({"command": "state"})
@@ -456,6 +637,72 @@ def _print_results(results: list[dict], verb: str) -> None:
     for result in results:
         pid = f" pid={result['pid']}" if result.get("pid") else ""
         print(f"{verb} {result['file']} for {result['monitor']} via {result['backend']}{pid}")
+
+
+def _video_progress_printer():
+    started_at = time.monotonic()
+
+    def print_progress(progress: VideoOptimizationProgress) -> None:
+        percent = progress.percent
+        if percent is None:
+            percent_text = "  ?.?%"
+            filled = 0
+        else:
+            percent_text = f"{percent:5.1f}%"
+            filled = int((percent / 100) * 28)
+        bar = "#" * filled + "-" * (28 - filled)
+        elapsed = max(0.001, time.monotonic() - started_at)
+        data_rate = _format_rate(progress.total_size, elapsed)
+        out_time = _format_cli_duration(progress.out_time_seconds)
+        duration = _format_cli_duration(progress.duration_seconds)
+        speed = f" {progress.speed}" if progress.speed else ""
+        print(
+            f"\r[{bar}] {percent_text} {out_time}/{duration} {data_rate}{speed}",
+            end="",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    return print_progress
+
+
+def _video_library_progress_printer():
+    current = {"path": ""}
+    inner = _video_progress_printer()
+
+    def print_progress(path: Path, progress: VideoOptimizationProgress) -> None:
+        if current["path"] != str(path):
+            current["path"] = str(path)
+            print(f"\n{path.name}", file=sys.stderr)
+        inner(progress)
+
+    return print_progress
+
+
+def _format_rate(size_bytes: int | None, elapsed_seconds: float) -> str:
+    if size_bytes is None:
+        return "?/s"
+    return f"{_format_cli_bytes(size_bytes / elapsed_seconds)}/s"
+
+
+def _format_cli_bytes(value: float) -> str:
+    units = ["B", "KiB", "MiB", "GiB"]
+    amount = float(value)
+    for unit in units:
+        if amount < 1024 or unit == units[-1]:
+            return f"{amount:.1f} {unit}"
+        amount /= 1024
+    return f"{value:.1f} B"
+
+
+def _format_cli_duration(value: float | None) -> str:
+    if value is None:
+        return "??:??"
+    minutes, seconds = divmod(value, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{int(hours)}:{int(minutes):02d}:{int(seconds):02d}"
+    return f"{int(minutes):02d}:{int(seconds):02d}"
 
 
 def _send_daemon_command(request: dict, verb: str) -> bool:

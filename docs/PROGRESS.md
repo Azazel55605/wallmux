@@ -213,23 +213,26 @@ Goal: turn the current daily-driver base into a more diagnosable, resilient, and
 
 ### V2.6: Video Optimization
 
-- [ ] Detect video resolution, codec, duration, and file size
-- [ ] Warn about unusually heavy videos for the active monitor setup
-- [ ] Add `wallmuxctl video inspect FILE`
-- [ ] Add `wallmuxctl video optimize FILE --profile PROFILE`
-- [ ] Add `wallmuxctl video optimize-library --profile PROFILE` as an explicit bulk action with a clear disk-usage/time warning
-- [ ] Add per-backend video quality/performance presets
-- [ ] Improve pause/resume behavior for locked, fullscreen, and inhibited states
-- [ ] Consider optional thumbnail/frame metadata caching for faster video browsing
-- [ ] Add optional video optimization that creates cached playback-friendly derivatives through `ffmpeg` without modifying originals
-- [ ] Detect when a video is already suitable and skip unnecessary optimization
-- [ ] Add optimization profiles such as compatibility, balanced, quality, and manual `ffmpeg` arguments
-- [ ] Add settings for preferred optimized codec/container, max resolution, bitrate/quality, cache location, and whether optimized videos are preferred automatically when present
-- [ ] Track optimized video derivatives separately from thumbnails because they can be large
-- [ ] Store optimized-video metadata for source path, mtime, size, codec, resolution, profile, generated file, generated size, and last-used time
-- [ ] Add battery-aware video behavior for laptops: keep playing, pause, skip video wallpapers, or show first frame while on battery
-- [ ] Add high-resource-use behavior for CPU/GPU load: pause video playback, pause autoswitching, or both after a configurable sustained threshold
-- [ ] Make GPU load detection best-effort with vendor/tool-specific support and clear unavailable-state reporting
+- [x] Detect video resolution, codec, duration, and file size
+- [x] Warn about unusually heavy videos for the active monitor setup
+- [x] Add `wallmuxctl video inspect FILE`
+- [x] Add `wallmuxctl video plan FILE --profile PROFILE` for dry-run optimization planning
+- [x] Add `wallmuxctl video optimize FILE --profile PROFILE --dry-run`
+- [x] Add `wallmuxctl video optimize FILE --profile PROFILE`
+- [x] Show CLI progress while `ffmpeg` optimization is running, including percentage, video time, output write rate, and ffmpeg speed
+- [x] Add `wallmuxctl video optimize-library --profile PROFILE` as an explicit bulk action with a clear disk-usage/time warning
+- [x] Add video quality/performance presets
+- [x] Improve pause/resume behavior for locked, fullscreen, inhibited, battery, and high-load states
+- [x] Consider optional thumbnail/frame metadata caching for faster video browsing; keep separate metadata sidecars for optimized videos first
+- [x] Add optional video optimization that creates cached playback-friendly derivatives through `ffmpeg` without modifying originals
+- [x] Detect when a video is already suitable and skip unnecessary optimization
+- [x] Add optimization profiles such as compatibility, balanced, quality, and manual `ffmpeg` arguments
+- [x] Add settings for preferred optimized codec/container, max resolution, bitrate/quality, cache location, and whether optimized videos are preferred automatically when present
+- [x] Track optimized video derivatives separately from thumbnails because they can be large
+- [x] Store optimized-video metadata for source path, mtime, size, codec, resolution, profile, generated file, generated size, and last-used time
+- [x] Add battery-aware video behavior for laptops: keep playing, pause, skip video wallpapers, or show first frame while on battery
+- [x] Add high-resource-use behavior for CPU/GPU load: pause video playback, pause autoswitching, or both after a configurable sustained threshold
+- [x] Make GPU load detection best-effort with vendor/tool-specific support and clear unavailable-state reporting
 
 ### V2.7: Cache Maintenance
 
@@ -317,6 +320,11 @@ Record notable checks here as the project moves.
 - 2026-05-26: Finished V2.3 conservative backend fallbacks with default `awww` -> `swww`, opt-in fallback chains, fallback logging, grouped all-monitor fallback handling, and GUI fallback settings.
 - 2026-05-26: Finished V2.4 optional daemon-command inhibition for GUI sets, daemon-backed set/random/restore/autoswitch-now commands, with status visibility and direct CLI execution kept uninhibited.
 - 2026-05-26: Finished V2.5 wallpaper profiles with category/subcategory labels, active profile config, CLI profile switching, GUI profile picker, profile-scoped wallpaper dirs/backend rules/autoswitch mode/filters, and profile switch hooks.
+- 2026-05-26: Started V2.6 with `wallmuxctl video inspect`, `ffprobe` metadata parsing, monitor-aware heavy-video warnings, and structured inspection output for future optimization/cache work.
+- 2026-05-26: Added V2.6 video optimization planning with compatibility/balanced/quality presets, deterministic optimized-video cache paths, suitability detection, and dry-run command output.
+- 2026-05-26: Added single-file V2.6 video optimization execution, writing playback-friendly derivatives into a separate optimized-video cache with JSON sidecar metadata.
+- 2026-05-26: Added CLI progress reporting for video optimization using ffmpeg progress events, with percent, video time, output write rate, and ffmpeg speed.
+- 2026-05-26: Finished V2.6 with bulk video optimization, configurable optimization settings, optional optimized-video preference, resource-mode state, battery/high-load inhibition behavior, and best-effort GPU load detection.
 - 2026-05-26: Added GUI profile configuration for editing profile metadata, folders, backend rules, autoswitch behavior, filters, and profile switch hooks.
 - 2026-05-26: Improved profile GUI setup with folder picker controls and clearer category/subcategory guidance.
 - 2026-05-26: Added profile category import from existing folder structures, creating one profile per child folder such as `green/Anime` and `green/Landscape`.

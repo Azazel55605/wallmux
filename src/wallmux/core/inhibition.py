@@ -8,6 +8,12 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any
 
+from wallmux.core.resources import (
+    battery_behavior,
+    evaluate_resource_status,
+    high_load_behavior,
+)
+
 
 @dataclass(frozen=True)
 class HyprlandClient:
@@ -81,6 +87,21 @@ def evaluate_inhibition(
     for process_name in rules.get("process_names", []):
         if checker(str(process_name)):
             return InhibitionStatus(True, f"process: {process_name}")
+
+    resources = evaluate_resource_status(config)
+    if resources.on_battery and battery_behavior(config) in {
+        "pause-videos",
+        "skip-videos",
+        "first-frame",
+        "pause-all",
+    }:
+        return InhibitionStatus(True, "resource: battery")
+    if resources.high_load and high_load_behavior(config) in {
+        "pause-videos",
+        "pause-autoswitch",
+        "pause-all",
+    }:
+        return InhibitionStatus(True, "resource: high load")
 
     clients = clients if clients is not None else list_clients()
     if rules.get("fullscreen", True):

@@ -26,6 +26,7 @@ from wallmux.core.process import pid_is_alive, terminate_pid
 from wallmux.core.state import WallpaperEntry, load_state, save_state
 from wallmux.core.transition_effects import TransitionContext, run_transition_stage
 from wallmux.core.transitions import TransitionKind, plan_transition
+from wallmux.core.video import optimized_video_for_source
 
 STATE_LOCK = threading.Lock()
 APP_NAME = "wallmux"
@@ -104,6 +105,7 @@ def set_wallpaper(
         dict,
     ):
         raise WallmuxError("backend_config must be an object")
+    backend_file = _backend_file(resolved_file, wallpaper_type, config)
     with STATE_LOCK:
         state = load_state(state_path)
         previous = state.monitors.get(monitor)
@@ -121,7 +123,7 @@ def set_wallpaper(
     for index, candidate in enumerate(candidates):
         try:
             return _set_wallpaper_with_backend(
-                resolved_file,
+                backend_file,
                 monitor,
                 wallpaper_type,
                 candidate,
@@ -139,6 +141,13 @@ def set_wallpaper(
             raise WallmuxError("; ".join(failures)) from error
 
     raise WallmuxError(f"no backend candidates for {wallpaper_type.value} wallpaper")
+
+
+def _backend_file(resolved_file: Path, wallpaper_type: WallpaperType, config: dict) -> Path:
+    if wallpaper_type is not WallpaperType.VIDEO:
+        return resolved_file
+    optimized = optimized_video_for_source(resolved_file, config)
+    return optimized or resolved_file
 
 
 def _set_wallpaper_with_backend(

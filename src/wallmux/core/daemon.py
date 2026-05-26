@@ -31,10 +31,16 @@ from wallmux.core.inhibition import (
     pause_videos,
 )
 from wallmux.core.ipc import default_socket_path
+from wallmux.core.mime import WallpaperType
 from wallmux.core.monitors import get_focused_monitor, list_monitors
 from wallmux.core.notifications import notify_switch_failed, notify_wallpaper_switched
 from wallmux.core.process import pause_pid, pid_is_alive, resume_pid, terminate_pid
 from wallmux.core.profiles import active_profile_name, effective_config_for_profile
+from wallmux.core.resources import (
+    battery_behavior,
+    evaluate_resource_status,
+    high_load_behavior,
+)
 from wallmux.core.state import WallmuxState, load_state, save_state, state_file
 from wallmux.core.wallpaper import (
     CommandRunner,
@@ -75,6 +81,7 @@ class WallmuxDaemon:
         self.next_startup_restore_at = time.monotonic()
         self.next_inhibition_check_at = 0.0
         self.inhibition_status = InhibitionStatus(False)
+        self.high_load_started_at: float | None = None
         self.paused_video_pids: set[int] = set()
         self.started_at = time.time()
         self.last_error: dict[str, Any] | None = None
@@ -164,7 +171,7 @@ class WallmuxDaemon:
         self._update_inhibition()
         if not autoswitch_enabled(self.config):
             return
-        if self.inhibition_status.inhibited and pause_autoswitch(self.config):
+        if self.inhibition_status.inhibited and self._should_pause_autoswitch():
             return
         now = time.monotonic()
         if now < self.next_autoswitch_at:
@@ -295,6 +302,7 @@ class WallmuxDaemon:
                 "events": self.events[-20:],
                 "autoswitch": self._autoswitch_status(),
                 "inhibition": self._inhibition_status(),
+                "resource_mode": self._resource_status(),
             },
         }
 
@@ -308,6 +316,8 @@ class WallmuxDaemon:
         effective_config = effective_config_for_profile(self.config)
         selected_mode = mode or autoswitch_mode(effective_config)
         items = load_wallpaper_library(self.config)
+        if self._should_skip_video_candidates():
+            items = [item for item in items if item.wallpaper_type is not WallpaperType.VIDEO]
         selected_target = target or autoswitch_target(effective_config)
         selected_monitor = monitor or autoswitch_monitor(effective_config)
         current_file = self._current_file_for_target(selected_target, selected_monitor)
@@ -340,6 +350,11 @@ class WallmuxDaemon:
                 state_path=self.state_path,
             )
         ]
+
+    def _should_skip_video_candidates(self) -> bool:
+        if self.inhibition_status.reason != "resource: battery":
+            return False
+        return battery_behavior(self.config) == "skip-videos"
 
     def _current_file_for_target(self, target: str, monitor: str) -> str | None:
         state = load_state(self.state_path)
@@ -377,6 +392,12 @@ class WallmuxDaemon:
             "check_interval_seconds": inhibition_interval(self.config),
             "paused_video_pids": sorted(self.paused_video_pids),
         }
+
+    def _resource_status(self) -> dict[str, Any]:
+        status = evaluate_resource_status(self.config).as_dict()
+        status["battery_behavior"] = battery_behavior(self.config)
+        status["high_load_behavior"] = high_load_behavior(self.config)
+        return status
 
     def _restore_on_startup(self) -> None:
         try:
@@ -416,7 +437,10 @@ class WallmuxDaemon:
             return
         self.next_inhibition_check_at = now + inhibition_interval(self.config)
         previous = self.inhibition_status
-        self.inhibition_status = evaluate_inhibition(self.config)
+        self.inhibition_status = self._sustained_inhibition_status(
+            evaluate_inhibition(self.config),
+            now,
+        )
         if previous != self.inhibition_status:
             if self.inhibition_status.inhibited:
                 self._record_event(
@@ -425,10 +449,44 @@ class WallmuxDaemon:
                 )
             else:
                 self._record_event("inhibition", "inhibition cleared")
-        if self.inhibition_status.inhibited and pause_videos(self.config):
+        if self.inhibition_status.inhibited and self._should_pause_videos():
             self._pause_tracked_videos()
         elif previous.inhibited:
             self._resume_paused_videos()
+
+    def _should_pause_autoswitch(self) -> bool:
+        reason = self.inhibition_status.reason
+        if reason == "resource: battery":
+            return battery_behavior(self.config) in {"skip-videos", "pause-all"}
+        if reason == "resource: high load":
+            return high_load_behavior(self.config) in {"pause-autoswitch", "pause-all"}
+        return pause_autoswitch(self.config)
+
+    def _should_pause_videos(self) -> bool:
+        reason = self.inhibition_status.reason
+        if reason == "resource: battery":
+            return battery_behavior(self.config) in {"pause-videos", "first-frame", "pause-all"}
+        if reason == "resource: high load":
+            return high_load_behavior(self.config) in {"pause-videos", "pause-all"}
+        return pause_videos(self.config)
+
+    def _sustained_inhibition_status(
+        self,
+        status: InhibitionStatus,
+        now: float,
+    ) -> InhibitionStatus:
+        if status.reason != "resource: high load":
+            self.high_load_started_at = None
+            return status
+
+        if self.high_load_started_at is None:
+            self.high_load_started_at = now
+        sustained_seconds = float(
+            self.config.get("resource_mode", {}).get("sustained_seconds", 15.0)
+        )
+        if now - self.high_load_started_at >= sustained_seconds:
+            return status
+        return InhibitionStatus(False)
 
     def _manual_command_inhibited_response(self, command: str) -> dict[str, Any] | None:
         if not inhibit_manual_commands(self.config):

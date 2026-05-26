@@ -124,6 +124,42 @@ def test_daemon_can_inhibit_manual_autoswitch_now_request(
     assert response["inhibition_reason"] == "fullscreen: game"
 
 
+def test_daemon_resource_inhibition_maps_to_requested_actions(tmp_path: Path) -> None:
+    config = sample_config(tmp_path)
+    config["resource_mode"]["battery_behavior"] = "pause-videos"
+    daemon = WallmuxDaemon(
+        config=config,
+        config_path=sample_config_path(tmp_path),
+        state_path=tmp_path / "state.json",
+        restore_on_startup=False,
+    )
+    daemon.inhibition_status = InhibitionStatus(True, "resource: battery")
+
+    assert daemon._should_pause_videos() is True
+    assert daemon._should_pause_autoswitch() is False
+
+    config["resource_mode"]["battery_behavior"] = "skip-videos"
+    assert daemon._should_pause_videos() is False
+    assert daemon._should_pause_autoswitch() is True
+    assert daemon._should_skip_video_candidates() is True
+
+
+def test_daemon_high_load_inhibition_requires_sustained_threshold(tmp_path: Path) -> None:
+    config = sample_config(tmp_path)
+    config["resource_mode"]["sustained_seconds"] = 10.0
+    daemon = WallmuxDaemon(
+        config=config,
+        config_path=sample_config_path(tmp_path),
+        state_path=tmp_path / "state.json",
+        restore_on_startup=False,
+    )
+    status = InhibitionStatus(True, "resource: high load")
+
+    assert daemon._sustained_inhibition_status(status, 100.0).inhibited is False
+    assert daemon._sustained_inhibition_status(status, 109.0).inhibited is False
+    assert daemon._sustained_inhibition_status(status, 110.0).inhibited is True
+
+
 def test_daemon_manual_set_inhibition_is_opt_in(tmp_path: Path, monkeypatch) -> None:
     runner = FakeRunner()
     state_path = tmp_path / "state.json"

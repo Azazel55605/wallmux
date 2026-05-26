@@ -101,6 +101,24 @@ desktop_entry = "wallmux-gui"
 [daemon]
 startup_restore_retry_seconds = 5.0
 
+[video_optimization]
+enabled = true
+auto_optimize = true
+profile = "balanced"
+cache_dir = ""
+prefer_optimized = true
+bulk_warning = true
+codec = "libx264"
+codec_names = ["h264"]
+container = "mp4"
+extension = ".mp4"
+max_width = 2560
+max_height = 1440
+max_bit_rate = 45000000
+crf = 22
+preset = "medium"
+extra_args = ["-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+
 [transitions]
 video_stop_timeout_seconds = 2.0
 kill_video_on_timeout = true
@@ -120,3 +138,10 @@ timeout_seconds = 2.0
 
 [colors]
 video_color_source = "thumbnail"
+
+[resource_mode]
+battery_behavior = "keep"
+high_load_behavior = "keep"
+cpu_load_threshold = 0.85
+gpu_load_threshold = 85.0
+sustained_seconds = 15.0

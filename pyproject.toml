@@ -1,6 +1,6 @@
 [project]
 name = "wallmux"
-version = "0.2.5"
+version = "0.2.6"
 description = "Hyprland-first wallpaper manager and backend orchestrator."
 readme = "README.md"
 requires-python = ">=3.11"

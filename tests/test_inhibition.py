@@ -62,3 +62,25 @@ def test_no_inhibition_when_disabled() -> None:
     )
 
     assert status.inhibited is False
+
+
+def test_inhibits_for_battery_resource_mode(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "wallmux.core.inhibition.evaluate_resource_status",
+        lambda config: type(
+            "Status",
+            (),
+            {"on_battery": True, "high_load": False},
+        )(),
+    )
+
+    status = evaluate_inhibition(
+        {
+            "inhibition": {"enabled": True, "process_names": [], "fullscreen": False},
+            "resource_mode": {"battery_behavior": "pause-videos"},
+        },
+        clients=[],
+    )
+
+    assert status.inhibited is True
+    assert status.reason == "resource: battery"

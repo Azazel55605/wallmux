@@ -120,6 +120,25 @@ options = "no-audio loop hwdec=auto"
     assert config["backends"]["mpvpaper"]["options"].startswith("no-config no-audio")
 
 
+def test_load_config_migrates_video_optimization_to_auto_cache_default(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[video_optimization]
+enabled = true
+prefer_optimized = false
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config["video_optimization"]["auto_optimize"] is True
+    assert config["video_optimization"]["prefer_optimized"] is True
+
+
 def test_load_config_migrates_inline_profiles_to_profile_file(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(

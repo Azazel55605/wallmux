@@ -88,6 +88,10 @@ def apply_config_migrations(
     default_mpvpaper = default_config.get("backends", {}).get("mpvpaper", {})
     if mpvpaper.get("options") == OLD_MPV_DEFAULT_OPTIONS:
         mpvpaper["options"] = default_mpvpaper.get("options", OLD_MPV_DEFAULT_OPTIONS)
+    video_optimization = migrated.get("video_optimization", {})
+    if isinstance(video_optimization, Mapping) and "auto_optimize" not in video_optimization:
+        video_optimization["auto_optimize"] = True
+        video_optimization["prefer_optimized"] = True
     return migrated
 
 
