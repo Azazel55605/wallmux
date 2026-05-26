@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from wallmux.core.config import load_config
+from wallmux.core.config import load_config, write_config
 from wallmux.core.daemon import WallmuxDaemon
 from wallmux.core.inhibition import InhibitionStatus
 from wallmux.core.ipc import DaemonUnavailable, send_request
 from wallmux.core.monitors import Monitor
+from wallmux.core.profiles import switch_profile
 from wallmux.core.state import WallmuxState, WallpaperEntry, load_state, save_state
 from wallmux.core.wallpaper import CommandRunner, WallmuxError
 
@@ -198,6 +199,47 @@ def test_daemon_handles_reload_request(tmp_path: Path, monkeypatch) -> None:
 
     assert response == {"ok": True}
     assert daemon.config["backend_rules"]["image"] == "swww"
+
+
+def test_daemon_random_uses_active_profile_after_reload(tmp_path: Path, monkeypatch) -> None:
+    default_dir = tmp_path / "default"
+    profile_dir = tmp_path / "green"
+    default_dir.mkdir()
+    profile_dir.mkdir()
+    default_wallpaper = default_dir / "default.png"
+    profile_wallpaper = profile_dir / "green.png"
+    default_wallpaper.write_bytes(b"")
+    profile_wallpaper.write_bytes(b"")
+    config_path = sample_config_path(tmp_path)
+    config = load_config(config_path)
+    config["general"]["wallpaper_dirs"] = [str(default_dir)]
+    config["profiles"]["entries"] = [
+        {
+            "name": "green",
+            "wallpaper_dirs": [str(profile_dir)],
+        }
+    ]
+    write_config(config, config_path)
+    switch_profile("green", config_path=config_path)
+
+    selected: list[Path] = []
+
+    def set_all(file: Path, **_kwargs):
+        selected.append(file)
+        return []
+
+    monkeypatch.setattr("wallmux.core.daemon.set_wallpaper_for_all", set_all)
+    daemon = WallmuxDaemon(
+        config=load_config(config_path),
+        config_path=config_path,
+        state_path=tmp_path / "state.json",
+        restore_on_startup=False,
+    )
+
+    response = daemon.handle_request({"command": "autoswitch-now", "mode": "random"})
+
+    assert response["ok"] is True
+    assert selected == [profile_wallpaper]
 
 
 def test_daemon_handles_restore_request(tmp_path: Path) -> None:

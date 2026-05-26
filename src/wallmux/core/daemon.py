@@ -34,6 +34,7 @@ from wallmux.core.ipc import default_socket_path
 from wallmux.core.monitors import get_focused_monitor, list_monitors
 from wallmux.core.notifications import notify_switch_failed, notify_wallpaper_switched
 from wallmux.core.process import pause_pid, pid_is_alive, resume_pid, terminate_pid
+from wallmux.core.profiles import active_profile_name, effective_config_for_profile
 from wallmux.core.state import WallmuxState, load_state, save_state, state_file
 from wallmux.core.wallpaper import (
     CommandRunner,
@@ -183,13 +184,14 @@ class WallmuxDaemon:
         inhibited_response = self._manual_command_inhibited_response("set")
         if inhibited_response:
             return inhibited_response
+        effective_config = effective_config_for_profile(self.config)
         file = Path(request["file"])
         backend_override = request.get("backend")
         backend_config_overrides = request.get("backend_config")
         if request.get("all"):
             results = set_wallpaper_for_all(
                 file,
-                config=self.config,
+                config=effective_config,
                 backend_override=backend_override,
                 backend_config_overrides=backend_config_overrides,
                 mode=request.get("all_monitor_mode"),
@@ -200,7 +202,7 @@ class WallmuxDaemon:
             results = [
                 set_wallpaper_for_focused(
                     file,
-                    config=self.config,
+                    config=effective_config,
                     backend_override=backend_override,
                     backend_config_overrides=backend_config_overrides,
                     runner=self.runner,
@@ -212,7 +214,7 @@ class WallmuxDaemon:
                 set_wallpaper(
                     file,
                     request["monitor"],
-                    config=self.config,
+                    config=effective_config,
                     backend_override=backend_override,
                     backend_config_overrides=backend_config_overrides,
                     runner=self.runner,
@@ -230,7 +232,7 @@ class WallmuxDaemon:
         if inhibited_response:
             return inhibited_response
         results = restore_wallpapers(
-            config=self.config,
+            config=effective_config_for_profile(self.config),
             runner=self.runner,
             state_path=self.state_path,
         )
@@ -303,17 +305,18 @@ class WallmuxDaemon:
         target: str | None = None,
         monitor: str | None = None,
     ) -> list[SetResult]:
-        selected_mode = mode or autoswitch_mode(self.config)
+        effective_config = effective_config_for_profile(self.config)
+        selected_mode = mode or autoswitch_mode(effective_config)
         items = load_wallpaper_library(self.config)
-        selected_target = target or autoswitch_target(self.config)
-        selected_monitor = monitor or autoswitch_monitor(self.config)
+        selected_target = target or autoswitch_target(effective_config)
+        selected_monitor = monitor or autoswitch_monitor(effective_config)
         current_file = self._current_file_for_target(selected_target, selected_monitor)
         item = choose_wallpaper(items, mode=selected_mode, current_file=current_file)
 
         if selected_target == "all":
             return set_wallpaper_for_all(
                 item.path,
-                config=self.config,
+                config=effective_config,
                 runner=self.runner,
                 state_path=self.state_path,
             )
@@ -321,7 +324,7 @@ class WallmuxDaemon:
             return [
                 set_wallpaper_for_focused(
                     item.path,
-                    config=self.config,
+                    config=effective_config,
                     runner=self.runner,
                     state_path=self.state_path,
                 )
@@ -332,7 +335,7 @@ class WallmuxDaemon:
             set_wallpaper(
                 item.path,
                 selected_monitor,
-                config=self.config,
+                config=effective_config,
                 runner=self.runner,
                 state_path=self.state_path,
             )
@@ -352,13 +355,15 @@ class WallmuxDaemon:
         return None
 
     def _autoswitch_status(self) -> dict[str, Any]:
+        effective_config = effective_config_for_profile(self.config)
         return {
-            "enabled": autoswitch_enabled(self.config),
-            "interval_seconds": autoswitch_interval(self.config),
-            "mode": autoswitch_mode(self.config),
-            "target": autoswitch_target(self.config),
-            "monitor": autoswitch_monitor(self.config),
+            "enabled": autoswitch_enabled(effective_config),
+            "interval_seconds": autoswitch_interval(effective_config),
+            "mode": autoswitch_mode(effective_config),
+            "target": autoswitch_target(effective_config),
+            "monitor": autoswitch_monitor(effective_config),
             "next_switch_seconds": max(0.0, self.next_autoswitch_at - time.monotonic()),
+            "profile": active_profile_name(self.config),
         }
 
     def _inhibition_status(self) -> dict[str, Any]:

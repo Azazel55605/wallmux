@@ -12,6 +12,12 @@ from wallmux.core.doctor import doctor_report_json, format_doctor_report, run_do
 from wallmux.core.ipc import DaemonUnavailable, send_request
 from wallmux.core.mime import detect_wallpaper_type
 from wallmux.core.monitors import list_monitors
+from wallmux.core.profiles import (
+    effective_config_for_profile,
+    get_active_profile,
+    list_profiles,
+    switch_profile,
+)
 from wallmux.core.wallpaper import (
     WallmuxError,
     restore_wallpapers,
@@ -72,6 +78,15 @@ def build_parser() -> argparse.ArgumentParser:
     autoswitch_set.add_argument("--mode", choices=["random", "name-up", "name-down"])
     autoswitch_set.add_argument("--target", choices=["all", "focused", "monitor"])
     autoswitch_set.add_argument("--monitor")
+
+    profile = subparsers.add_parser("profile", help="Inspect or switch wallpaper profiles.")
+    profile_subparsers = profile.add_subparsers(dest="profile_command", required=True)
+    profile_subparsers.add_parser("list", help="List configured profiles.")
+    profile_subparsers.add_parser("active", help="Show the active profile.")
+    profile_use = profile_subparsers.add_parser("use", help="Switch active profile.")
+    profile_use.add_argument("name")
+    profile_use.add_argument("--category", default="")
+    profile_use.add_argument("--subcategory", default="")
 
     restore = subparsers.add_parser("restore", help="Restore saved wallpaper state.")
     restore.set_defaults(command="restore")
@@ -176,6 +191,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "autoswitch":
         return _handle_autoswitch(args)
 
+    if args.command == "profile":
+        return _handle_profile(args)
+
     if args.command == "restore":
         if not args.direct and _send_daemon_command({"command": "restore"}, "restored"):
             return 0
@@ -237,6 +255,7 @@ def main(argv: list[str] | None = None) -> int:
             "autoswitch: "
             f"enabled={autoswitch.get('enabled')} "
             f"mode={autoswitch.get('mode')} "
+            f"profile={autoswitch.get('profile') or 'none'} "
             f"target={autoswitch.get('target')} "
             f"next={autoswitch.get('next_switch_seconds', 0):.1f}s"
         )
@@ -296,6 +315,7 @@ def _handle_autoswitch(args) -> int:
         autoswitch = response.get("daemon", {}).get("autoswitch", {})
         for key in ("enabled", "interval_seconds", "mode", "target", "monitor"):
             print(f"{key}: {autoswitch.get(key)}")
+        print(f"profile: {autoswitch.get('profile') or 'none'}")
         print(f"next_switch_seconds: {autoswitch.get('next_switch_seconds', 0):.1f}")
         inhibition = response.get("daemon", {}).get("inhibition", {})
         print(f"inhibit_manual_commands: {inhibition.get('inhibit_manual_commands')}")
@@ -346,6 +366,49 @@ def _handle_autoswitch(args) -> int:
     return 0
 
 
+def _handle_profile(args) -> int:
+    config = load_config()
+    if args.profile_command == "list":
+        profiles = list_profiles(config)
+        if not profiles:
+            print("no profiles configured")
+            return 0
+        active = get_active_profile(config)
+        for profile in profiles:
+            marker = "*" if active and profile == active else " "
+            print(f"{marker} {profile.label}")
+        return 0
+
+    if args.profile_command == "active":
+        active = get_active_profile(config)
+        if active is None:
+            print("no active profile")
+            return 0
+        print(active.label)
+        return 0
+
+    try:
+        profile = switch_profile(
+            args.name,
+            category=args.category,
+            subcategory=args.subcategory,
+            config=config,
+            after_write=_reload_daemon_if_running,
+        )
+    except ValueError as error:
+        print(f"wallmuxctl: {error}")
+        return 1
+
+    if not _daemon_running():
+        print(f"profile active: {profile.label}")
+        print("wallmuxd: not running; config saved")
+        return 0
+
+    print(f"profile active: {profile.label}")
+    print("wallmuxd: running; config reloaded")
+    return 0
+
+
 def _daemon_running() -> bool:
     try:
         response = send_request({"command": "state"})
@@ -354,14 +417,22 @@ def _daemon_running() -> bool:
     return bool(response.get("ok"))
 
 
+def _reload_daemon_if_running(_profile=None) -> None:
+    try:
+        send_request({"command": "reload"})
+    except DaemonUnavailable:
+        return
+
+
 def _set_random_direct(args) -> list:
     config = load_config()
+    effective_config = effective_config_for_profile(config)
     item = choose_wallpaper(load_wallpaper_library(config), mode="random")
     if args.focused_monitor:
-        return [set_wallpaper_for_focused(item.path, config=config)]
+        return [set_wallpaper_for_focused(item.path, config=effective_config)]
     if args.monitor:
-        return [set_wallpaper(item.path, args.monitor, config=config)]
-    return set_wallpaper_for_all(item.path, config=config, mode=args.all_mode)
+        return [set_wallpaper(item.path, args.monitor, config=effective_config)]
+    return set_wallpaper_for_all(item.path, config=effective_config, mode=args.all_mode)
 
 
 def _print_autoswitch_config(config: dict) -> None:

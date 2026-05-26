@@ -187,12 +187,29 @@ Goal: turn the current daily-driver base into a more diagnosable, resilient, and
 
 ### V2.5: Profiles and Subcategories
 
-- [ ] Add named wallpaper profiles
-- [ ] Support nested profile categories such as color -> topic
-- [ ] Allow profile/category selection from CLI
-- [ ] Add a small GUI profile picker popup for quick switching
-- [ ] Add profile-level pre-switch and post-switch hooks
-- [ ] Allow profiles to define wallpaper dirs, backend rules, autoswitch mode, filters, and hook behavior
+- [x] Add named wallpaper profiles
+- [x] Support nested profile categories such as color -> topic
+- [x] Allow profile/category selection from CLI
+- [x] Add a small GUI profile picker popup for quick switching
+- [x] Add `wallmux-gui profile-picker` standalone picker mode
+- [x] Add keyboard shortcut for opening the profile picker from the GUI
+- [x] Add GUI profile configuration for creating and editing profile entries
+- [x] Rework profile settings list into a tree structure
+- [x] Rework profile picker into a searchable tree for larger profile collections
+- [x] Reduce profile settings clutter by moving primary actions to the top and hooks into a sub-tab
+- [x] Split profile settings into Identity, Folders, Backends, Filters, and Hooks tabs
+- [x] Add folder picker controls for profile wallpaper directories
+- [x] Add import flow that turns category root child folders into profile subcategories
+- [x] Treat imported roots as parent/all profiles and imported child folders as separate subprofiles
+- [x] Clarify in GUI/docs that categories are organizational labels and wallpaper membership comes from profile folders and filters
+- [x] Add profile-level pre-switch and post-switch hooks
+- [x] Add per-profile switch for including parent profile hooks in child profiles
+- [x] Allow profiles to define wallpaper dirs, backend rules, autoswitch mode, filters, and hook behavior
+- [x] Replace long profile help text with compact hover help markers and add contextual help to dense GUI settings
+- [x] Move profiles into `wallmux-profiles.toml` with automatic migration from older inline config profiles
+- [x] Add example profile theme hook for moving legacy color/theme side effects into Wallmux profile switching
+- [x] Add debounced autosave for profile editor changes
+- [x] Add optional profile color swatches for tagging and visual identification
 
 ### V2.6: Video Optimization
 
@@ -226,6 +243,16 @@ Goal: turn the current daily-driver base into a more diagnosable, resilient, and
 - [ ] Show estimated and actual optimized-video cache size before and after optimization jobs
 - [ ] Add config for enabling/disabling cache maintenance, setting cleanup interval, and limiting optimized-video cache size
 - [ ] Add cleanup policies such as stale-only and least-recently-used for optimized video derivatives
+
+### V2.8: Examples and Recipes
+
+- [ ] Create an `examples/` collection for reusable Wallmux workflows
+- [ ] Add profile hook recipes for pywal, matugen, QuickShell, hyprlock, and notification workflows
+- [ ] Add profile/theme switching examples that demonstrate parent and child profile hooks
+- [ ] Add autoswitch examples for random, name-up, name-down, focused-monitor, and all-monitor setups
+- [ ] Add backend configuration examples for `awww`, `swww`, `hyprpaper`, `mpvpaper`, and fallback chains
+- [ ] Add cache/video optimization examples once V2.6/V2.7 land
+- [ ] Document which examples are generic and which are personal/adapt-to-your-system recipes
 
 ### Deferred / Needs More Design
 
@@ -289,3 +316,18 @@ Record notable checks here as the project moves.
 - 2026-05-26: Started V2.2 with richer daemon state, monitor status, recent daemon events, improved `wallmuxctl state`, and a GUI State tab with daemon/runtime and video doctor information.
 - 2026-05-26: Finished V2.3 conservative backend fallbacks with default `awww` -> `swww`, opt-in fallback chains, fallback logging, grouped all-monitor fallback handling, and GUI fallback settings.
 - 2026-05-26: Finished V2.4 optional daemon-command inhibition for GUI sets, daemon-backed set/random/restore/autoswitch-now commands, with status visibility and direct CLI execution kept uninhibited.
+- 2026-05-26: Finished V2.5 wallpaper profiles with category/subcategory labels, active profile config, CLI profile switching, GUI profile picker, profile-scoped wallpaper dirs/backend rules/autoswitch mode/filters, and profile switch hooks.
+- 2026-05-26: Added GUI profile configuration for editing profile metadata, folders, backend rules, autoswitch behavior, filters, and profile switch hooks.
+- 2026-05-26: Improved profile GUI setup with folder picker controls and clearer category/subcategory guidance.
+- 2026-05-26: Added profile category import from existing folder structures, creating one profile per child folder such as `green/Anime` and `green/Landscape`.
+- 2026-05-26: Reworked profile hierarchy UX so imported roots become parent/all profiles, child folders become separate subprofiles, and `wallmux-gui profile-picker` opens the switcher directly.
+- 2026-05-26: Cleaned up profile settings UX with a tree view, top-level action buttons, hook sub-tab, and `Ctrl+P` profile picker shortcut.
+- 2026-05-26: Split profile editing into focused Identity, Folders, Backends, Filters, and Hooks tabs.
+- 2026-05-26: Added `include_parent_hooks` for child profiles, running parent hooks before child hooks when enabled.
+- 2026-05-26: Replaced the profile explanation block with compact hover help markers and added contextual help markers to dense settings rows across profiles, backend defaults, notifications, inhibition, autoswitching, and transitions.
+- 2026-05-26: Moved profile storage to `~/.config/wallmux/wallmux-profiles.toml`, added automatic migration from inline `[profiles]`, and fixed profile tree parent rows so parent hooks can be edited normally.
+- 2026-05-26: Added `examples/hooks/profile-theme-hook.sh` as a Wallmux-profile-native replacement for the old Wofi wallpaper theme script's Hyprland, hyprlock, fastfetch, SDDM, notification, and optional random-wallpaper side effects.
+- 2026-05-26: Added V2.8 roadmap section for examples and recipes so personal workflow scripts can evolve into reusable documentation without bloating core Wallmux.
+- 2026-05-26: Updated the profile theme hook example for Hyprland Lua `borders.lua` active border colors and added debounced profile-editor autosave.
+- 2026-05-26: Reworked the profile picker from a flat list into a searchable parent/child tree for larger profile collections.
+- 2026-05-26: Added optional profile color swatches to profile config, the profile settings tree, and the profile picker.

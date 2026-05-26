@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from wallmux.core.library import WallpaperItem, scan_wallpaper_dir
+from wallmux.core.profiles import (
+    effective_config_for_profile,
+    get_active_profile,
+    profile_matches_filters,
+)
 
 MODES = {"random", "name-up", "name-down"}
 TARGETS = {"all", "focused", "monitor"}
@@ -43,10 +48,13 @@ def autoswitch_monitor(config: dict[str, Any]) -> str:
 
 
 def load_wallpaper_library(config: dict[str, Any]) -> list[WallpaperItem]:
+    profile = get_active_profile(config)
+    config = effective_config_for_profile(config, profile)
     items: list[WallpaperItem] = []
     backend_rules = config.get("backend_rules", {})
     for raw_dir in config.get("general", {}).get("wallpaper_dirs", []):
         items.extend(scan_wallpaper_dir(Path(raw_dir), backend_rules=backend_rules))
+    items = [item for item in items if profile_matches_filters(profile, item)]
     return sorted(_deduplicate(items), key=lambda item: item.path.name.casefold())
 
 

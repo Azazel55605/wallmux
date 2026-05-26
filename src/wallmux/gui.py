@@ -18,16 +18,26 @@ from wallmux.core.ipc import DaemonUnavailable, send_request
 from wallmux.core.library import WallpaperItem, filter_wallpapers, scan_wallpaper_dir
 from wallmux.core.mime import WallpaperType
 from wallmux.core.monitors import list_monitors
+from wallmux.core.profiles import (
+    effective_config_for_profile,
+    get_active_profile,
+    list_profiles,
+    profile_entries_from_category_root,
+    profile_matches_filters,
+    switch_profile,
+)
 from wallmux.core.thumbnails import ensure_thumbnail
 from wallmux.core.wallpaper import WallmuxError, set_wallpaper, set_wallpaper_for_all
 
 try:
     from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, Signal, Slot
-    from PySide6.QtGui import QAction, QIcon, QKeySequence, QPixmap
+    from PySide6.QtGui import QAction, QColor, QIcon, QKeySequence, QPixmap
     from PySide6.QtWidgets import (
         QApplication,
         QCheckBox,
+        QColorDialog,
         QComboBox,
+        QDialog,
         QDoubleSpinBox,
         QFileDialog,
         QFormLayout,
@@ -50,6 +60,8 @@ try:
         QTabWidget,
         QTextEdit,
         QToolBar,
+        QTreeWidget,
+        QTreeWidgetItem,
         QVBoxLayout,
         QWidget,
     )
@@ -99,6 +111,7 @@ IMAGE_TRANSITIONS = [
 ]
 
 THEME_DEBUG_ARG = "--theme-debug"
+PROFILE_PICKER_ARG = "profile-picker"
 SYSTEM_QT_PLUGIN_PATHS = [
     Path("/usr/lib/qt6/plugins"),
     Path("/usr/lib/qt/plugins"),
@@ -139,9 +152,14 @@ class WallmuxWindow(QMainWindow):
         self.thumbnail_tasks: dict[str, ThumbnailTask] = {}
         self.zen_mode = False
         self.daemon_running = False
+        self.profile_settings_loading = False
         self.thumbnail_size = int(self.config.get("general", {}).get("thumbnail_size", 256))
         self.thread_pool = QThreadPool.globalInstance()
         self.thread_pool.setMaxThreadCount(min(4, max(2, self.thread_pool.maxThreadCount())))
+        self.profile_autosave_timer = QTimer(self)
+        self.profile_autosave_timer.setSingleShot(True)
+        self.profile_autosave_timer.setInterval(700)
+        self.profile_autosave_timer.timeout.connect(self.autosave_profile_settings)
 
         self.setWindowFlag(Qt.WindowType.Dialog, True)
         self.setWindowTitle(WINDOW_TITLE)
@@ -187,8 +205,15 @@ class WallmuxWindow(QMainWindow):
             self,
         )
         refresh_action.triggered.connect(self.refresh_library)
+        profile_action = QAction(
+            self._theme_icon("view-list-symbolic", QStyle.SP_FileDialogListView),
+            "Profiles",
+            self,
+        )
+        profile_action.triggered.connect(self.show_profile_picker)
         self.toolbar.addAction(open_action)
         self.toolbar.addAction(refresh_action)
+        self.toolbar.addAction(profile_action)
 
         self.search_box = QLineEdit()
         self.search_box.setMinimumWidth(240)
@@ -293,6 +318,11 @@ class WallmuxWindow(QMainWindow):
         set_action.triggered.connect(self.set_selected_wallpaper)
         self.addAction(set_action)
 
+        profile_picker_action = QAction("Open Profile Picker", self)
+        profile_picker_action.setShortcut(QKeySequence("Ctrl+P"))
+        profile_picker_action.triggered.connect(self.show_profile_picker)
+        self.addAction(profile_picker_action)
+
     def _build_settings_tab(self) -> None:
         tab = QWidget()
         outer = QVBoxLayout(tab)
@@ -301,6 +331,7 @@ class WallmuxWindow(QMainWindow):
 
         general_page, general_layout = self._settings_page()
         library_page, library_layout = self._settings_page()
+        profiles_page, profiles_layout = self._settings_page()
         backend_page, backend_page_layout = self._settings_page()
         autoswitch_page, autoswitch_layout = self._settings_page()
         inhibition_page, inhibition_layout = self._settings_page()
@@ -326,7 +357,14 @@ class WallmuxWindow(QMainWindow):
         self.all_monitor_mode_box = QComboBox()
         self.all_monitor_mode_box.addItem("All at the same time", "simultaneous")
         self.all_monitor_mode_box.addItem("One by one", "sequential")
-        general_form.addRow("All Monitors", self.all_monitor_mode_box)
+        general_form.addRow(
+            _form_label(
+                "All Monitors",
+                "Controls how Wallmux applies one wallpaper to every monitor. "
+                "Simultaneous sends one grouped command when the backend supports it.",
+            ),
+            self.all_monitor_mode_box,
+        )
         general_layout.addWidget(general_group)
         general_layout.addStretch(1)
 
@@ -349,10 +387,32 @@ class WallmuxWindow(QMainWindow):
         self.autoswitch_monitor_edit = QLineEdit()
         autoswitch_form.addRow("Daemon", self.daemon_status_label)
         autoswitch_form.addRow("", self.autoswitch_enabled_check)
-        autoswitch_form.addRow("Interval", self.autoswitch_interval_spin)
-        autoswitch_form.addRow("Next Wallpaper", self.autoswitch_mode_box)
-        autoswitch_form.addRow("Target", self.autoswitch_target_box)
-        autoswitch_form.addRow("Monitor", self.autoswitch_monitor_edit)
+        autoswitch_form.addRow(
+            _form_label("Interval", "Seconds between automatic wallpaper switches."),
+            self.autoswitch_interval_spin,
+        )
+        autoswitch_form.addRow(
+            _form_label(
+                "Next Wallpaper",
+                "Random chooses from the active library. Name up/down walks the sorted list.",
+            ),
+            self.autoswitch_mode_box,
+        )
+        autoswitch_form.addRow(
+            _form_label(
+                "Target",
+                "Where automatic switches apply: all monitors, focused monitor, "
+                "or one named monitor.",
+            ),
+            self.autoswitch_target_box,
+        )
+        autoswitch_form.addRow(
+            _form_label(
+                "Monitor",
+                "Monitor name used only when the target is Specific monitor.",
+            ),
+            self.autoswitch_monitor_edit,
+        )
         autoswitch_buttons = QHBoxLayout()
         save_autoswitch_button = QPushButton("Save Auto Switching")
         save_autoswitch_button.clicked.connect(self.save_autoswitch_settings)
@@ -391,10 +451,36 @@ class WallmuxWindow(QMainWindow):
         inhibition_form.addRow("", self.inhibition_pause_videos_check)
         inhibition_form.addRow("", self.inhibition_manual_commands_check)
         inhibition_form.addRow("", self.inhibition_fullscreen_check)
-        inhibition_form.addRow("Check Interval", self.inhibition_interval_spin)
-        inhibition_form.addRow("Process Names", self.inhibition_process_names_edit)
-        inhibition_form.addRow("Class Patterns", self.inhibition_class_patterns_edit)
-        inhibition_form.addRow("Title Patterns", self.inhibition_title_patterns_edit)
+        inhibition_form.addRow(
+            _form_label(
+                "Check Interval",
+                "Seconds between inhibition checks. Lower values react faster "
+                "but wake up more often.",
+            ),
+            self.inhibition_interval_spin,
+        )
+        inhibition_form.addRow(
+            _form_label(
+                "Process Names",
+                "Exact process names that pause autoswitch/video playback, "
+                "such as gamescope or wine64.",
+            ),
+            self.inhibition_process_names_edit,
+        )
+        inhibition_form.addRow(
+            _form_label(
+                "Class Patterns",
+                "Regular expressions matched against Hyprland window classes.",
+            ),
+            self.inhibition_class_patterns_edit,
+        )
+        inhibition_form.addRow(
+            _form_label(
+                "Title Patterns",
+                "Regular expressions matched against Hyprland window titles.",
+            ),
+            self.inhibition_title_patterns_edit,
+        )
         save_inhibition_button = QPushButton("Save Inhibition")
         save_inhibition_button.clicked.connect(self.save_inhibition_settings)
         inhibition_form.addRow("", save_inhibition_button)
@@ -413,10 +499,34 @@ class WallmuxWindow(QMainWindow):
         notifications_form.addRow("", self.notifications_enabled_check)
         notifications_form.addRow("", self.notify_switched_check)
         notifications_form.addRow("", self.notify_failed_check)
-        notifications_form.addRow("Command", self.notification_command_edit)
-        notifications_form.addRow("App Name", self.notification_app_name_edit)
-        notifications_form.addRow("Icon", self.notification_icon_edit)
-        notifications_form.addRow("Desktop Entry", self.notification_desktop_entry_edit)
+        notifications_form.addRow(
+            _form_label(
+                "Command",
+                "Notification command to run. notify-send compatible commands work best.",
+            ),
+            self.notification_command_edit,
+        )
+        notifications_form.addRow(
+            _form_label(
+                "App Name",
+                "Application name shown by the notification daemon.",
+            ),
+            self.notification_app_name_edit,
+        )
+        notifications_form.addRow(
+            _form_label(
+                "Icon",
+                "Icon name or icon path passed to the notification daemon.",
+            ),
+            self.notification_icon_edit,
+        )
+        notifications_form.addRow(
+            _form_label(
+                "Desktop Entry",
+                "Desktop entry identity used by portals and some notification daemons.",
+            ),
+            self.notification_desktop_entry_edit,
+        )
         save_notifications_button = QPushButton("Save Notifications")
         save_notifications_button.clicked.connect(self.save_notification_settings)
         notifications_form.addRow("", save_notifications_button)
@@ -440,6 +550,208 @@ class WallmuxWindow(QMainWindow):
         library_layout.addWidget(folders_group)
         library_layout.addStretch(1)
 
+        profiles_group = QGroupBox("Profiles")
+        profiles_outer = QHBoxLayout(profiles_group)
+        self.profile_tree = QTreeWidget()
+        self.profile_tree.setMinimumWidth(240)
+        self.profile_tree.setHeaderHidden(True)
+        self.profile_tree.currentItemChanged.connect(self.select_profile_tree_item)
+        profiles_outer.addWidget(self.profile_tree)
+
+        profile_editor = QVBoxLayout()
+        profile_buttons = QHBoxLayout()
+        add_profile_button = QPushButton("Add")
+        add_profile_button.clicked.connect(self.add_profile_settings)
+        import_profile_button = QPushButton("Import Folder Tree")
+        import_profile_button.clicked.connect(self.import_profile_category_settings)
+        remove_profile_button = QPushButton("Remove")
+        remove_profile_button.clicked.connect(self.remove_profile_settings)
+        save_profile_button = QPushButton("Save")
+        save_profile_button.clicked.connect(self.save_profile_settings)
+        active_profile_button = QPushButton("Set Active")
+        active_profile_button.clicked.connect(self.set_active_profile_settings)
+        profile_help = _help_marker(
+            "A parent profile is the broad set, for example green. It can point at the "
+            "green folder and show all wallpapers below it. Subprofiles are separate "
+            "selectable profiles inside that parent, for example green / Anime. "
+            "Import Folder Tree creates both from an existing folder structure."
+        )
+        profile_buttons.addWidget(add_profile_button)
+        profile_buttons.addWidget(import_profile_button)
+        profile_buttons.addWidget(remove_profile_button)
+        profile_buttons.addWidget(save_profile_button)
+        profile_buttons.addWidget(active_profile_button)
+        profile_buttons.addWidget(profile_help)
+        profile_buttons.addStretch(1)
+        profile_editor.addLayout(profile_buttons)
+
+        profile_tabs = QTabWidget()
+        identity_profile_page = QWidget()
+        folders_profile_page = QWidget()
+        backends_profile_page = QWidget()
+        filters_profile_page = QWidget()
+        hooks_profile_page = QWidget()
+        identity_profile_layout = QVBoxLayout(identity_profile_page)
+        folders_profile_layout = QVBoxLayout(folders_profile_page)
+        backends_profile_layout = QVBoxLayout(backends_profile_page)
+        filters_profile_layout = QVBoxLayout(filters_profile_page)
+        hooks_profile_layout = QVBoxLayout(hooks_profile_page)
+        identity_profile_form = QFormLayout()
+        self.profile_name_edit = QLineEdit()
+        self.profile_category_edit = QLineEdit()
+        self.profile_category_edit.setPlaceholderText("leave empty for a parent profile")
+        self.profile_category_edit.setToolTip(
+            "Parent profile name for subprofiles. Example: green for green / Anime."
+        )
+        self.profile_subcategory_edit = QLineEdit()
+        self.profile_subcategory_edit.setPlaceholderText("optional display grouping")
+        self.profile_subcategory_edit.setToolTip(
+            "Optional subprofile label. Imported child profiles use their folder name."
+        )
+        self.profile_color_edit = QLineEdit()
+        self.profile_color_edit.setPlaceholderText("#7ab574")
+        self.profile_color_edit.setToolTip("Optional hex color used as a profile swatch.")
+        profile_color_button = QPushButton("Choose")
+        profile_color_button.clicked.connect(self.choose_profile_color)
+        profile_color_layout = QHBoxLayout()
+        profile_color_layout.addWidget(self.profile_color_edit)
+        profile_color_layout.addWidget(profile_color_button)
+        self.profile_dirs_list = QListWidget()
+        self.profile_dirs_list.setMinimumHeight(75)
+        self.profile_image_backend_box = QComboBox()
+        self.profile_image_backend_box.addItem("Global default", "")
+        self.profile_image_backend_box.addItems(["awww", "swww", "hyprpaper"])
+        self.profile_gif_backend_box = QComboBox()
+        self.profile_gif_backend_box.addItem("Global default", "")
+        self.profile_gif_backend_box.addItems(["awww", "swww", "mpvpaper", "gslapper"])
+        self.profile_video_backend_box = QComboBox()
+        self.profile_video_backend_box.addItem("Global default", "")
+        self.profile_video_backend_box.addItems(["mpvpaper", "gslapper"])
+        self.profile_autoswitch_mode_box = QComboBox()
+        self.profile_autoswitch_mode_box.addItem("Global default", "")
+        self.profile_autoswitch_mode_box.addItem("Random", "random")
+        self.profile_autoswitch_mode_box.addItem("Name up", "name-up")
+        self.profile_autoswitch_mode_box.addItem("Name down", "name-down")
+        self.profile_filter_query_edit = QLineEdit()
+        self.profile_filter_types_edit = QLineEdit()
+        self.profile_filter_types_edit.setPlaceholderText("image, gif, video")
+        self.profile_before_switch_edit = QTextEdit()
+        self.profile_before_switch_edit.setMinimumHeight(65)
+        self.profile_after_switch_edit = QTextEdit()
+        self.profile_after_switch_edit.setMinimumHeight(65)
+        self.profile_include_parent_hooks_check = QCheckBox("Include parent profile hooks")
+        self.profile_include_parent_hooks_check.setToolTip(
+            "When this is a subprofile, run the parent profile hooks first."
+        )
+        self._connect_profile_autosave()
+
+        identity_profile_form.addRow(
+            _form_label("Profile Name", "The selectable profile name shown in the picker."),
+            self.profile_name_edit,
+        )
+        identity_profile_form.addRow(
+            _form_label(
+                "Parent Profile",
+                "Leave empty for a parent/all profile. For child profiles, "
+                "set this to the parent name.",
+            ),
+            self.profile_category_edit,
+        )
+        identity_profile_form.addRow(
+            _form_label(
+                "Subprofile Label",
+                "Optional grouping label. Imported child profiles use their folder name.",
+            ),
+            self.profile_subcategory_edit,
+        )
+        identity_profile_form.addRow(
+            _form_label("Color", "Optional swatch color for profile identification."),
+            profile_color_layout,
+        )
+        identity_profile_layout.addLayout(identity_profile_form)
+        identity_profile_layout.addStretch(1)
+
+        profile_dirs_layout = QVBoxLayout()
+        profile_dirs_layout.addWidget(self.profile_dirs_list)
+        profile_dirs_buttons = QHBoxLayout()
+        add_profile_dir_button = QPushButton("Add Folder")
+        add_profile_dir_button.clicked.connect(self.add_profile_dir_settings)
+        remove_profile_dir_button = QPushButton("Remove Selected")
+        remove_profile_dir_button.clicked.connect(self.remove_profile_dir_settings)
+        profile_dirs_buttons.addWidget(add_profile_dir_button)
+        profile_dirs_buttons.addWidget(remove_profile_dir_button)
+        profile_dirs_buttons.addStretch(1)
+        profile_dirs_layout.addLayout(profile_dirs_buttons)
+        folders_profile_layout.addWidget(
+            _help_marker(
+                "Wallpapers belong to a profile through these folders. Parent profiles can point "
+                "at a root folder; child profiles usually point at one child folder."
+            )
+        )
+        folders_profile_layout.addLayout(profile_dirs_layout)
+        folders_profile_layout.addStretch(1)
+
+        backends_profile_form = QFormLayout()
+        backends_profile_form.addRow(
+            _form_label("Images", "Optional image backend override for this profile."),
+            self.profile_image_backend_box,
+        )
+        backends_profile_form.addRow(
+            _form_label("GIFs", "Optional GIF backend override for this profile."),
+            self.profile_gif_backend_box,
+        )
+        backends_profile_form.addRow(
+            _form_label("Videos", "Optional video backend override for this profile."),
+            self.profile_video_backend_box,
+        )
+        backends_profile_form.addRow(
+            _form_label("Autoswitch", "Optional next-wallpaper mode override for this profile."),
+            self.profile_autoswitch_mode_box,
+        )
+        backends_profile_layout.addLayout(backends_profile_form)
+        backends_profile_layout.addStretch(1)
+
+        filters_profile_form = QFormLayout()
+        filters_profile_form.addRow(
+            _form_label(
+                "Name Filter",
+                "Optional text filter matched against wallpaper filenames in this profile.",
+            ),
+            self.profile_filter_query_edit,
+        )
+        filters_profile_form.addRow(
+            _form_label(
+                "Media Types",
+                "Optional comma-separated type filter: image, gif, video.",
+            ),
+            self.profile_filter_types_edit,
+        )
+        filters_profile_layout.addLayout(filters_profile_form)
+        filters_profile_layout.addStretch(1)
+
+        hooks_profile_form = QFormLayout()
+        hooks_profile_form.addRow("", self.profile_include_parent_hooks_check)
+        hooks_profile_form.addRow(
+            _form_label("Before Switch", "Commands run before this profile becomes active."),
+            self.profile_before_switch_edit,
+        )
+        hooks_profile_form.addRow(
+            _form_label("After Switch", "Commands run after this profile becomes active."),
+            self.profile_after_switch_edit,
+        )
+        hooks_profile_layout.addLayout(hooks_profile_form)
+        hooks_profile_layout.addStretch(1)
+
+        profile_tabs.addTab(identity_profile_page, "Identity")
+        profile_tabs.addTab(folders_profile_page, "Folders")
+        profile_tabs.addTab(backends_profile_page, "Backends")
+        profile_tabs.addTab(filters_profile_page, "Filters")
+        profile_tabs.addTab(hooks_profile_page, "Hooks")
+        profile_editor.addWidget(profile_tabs)
+        profiles_outer.addLayout(profile_editor, 1)
+        profiles_layout.addWidget(profiles_group)
+        profiles_layout.addStretch(1)
+
         backend_group = QGroupBox("Backend Defaults")
         backend_layout = QVBoxLayout(backend_group)
 
@@ -450,9 +762,18 @@ class WallmuxWindow(QMainWindow):
         self.gif_backend_default_box.addItems(["awww", "swww", "mpvpaper", "gslapper"])
         self.video_backend_default_box = QComboBox()
         self.video_backend_default_box.addItems(["mpvpaper", "gslapper"])
-        routing_form.addRow("Images", self.image_backend_default_box)
-        routing_form.addRow("GIFs", self.gif_backend_default_box)
-        routing_form.addRow("Videos", self.video_backend_default_box)
+        routing_form.addRow(
+            _form_label("Images", "Default backend used for static image wallpapers."),
+            self.image_backend_default_box,
+        )
+        routing_form.addRow(
+            _form_label("GIFs", "Default backend used for animated GIF wallpapers."),
+            self.gif_backend_default_box,
+        )
+        routing_form.addRow(
+            _form_label("Videos", "Default backend used for video wallpapers."),
+            self.video_backend_default_box,
+        )
         backend_layout.addLayout(routing_form)
 
         fallback_form = QFormLayout()
@@ -466,11 +787,43 @@ class WallmuxWindow(QMainWindow):
         self.hyprpaper_fallbacks_edit.setPlaceholderText("opt-in only")
         self.mpvpaper_fallbacks_edit.setPlaceholderText("gslapper")
         self.gslapper_fallbacks_edit.setPlaceholderText("mpvpaper")
-        fallback_form.addRow("awww", self.awww_fallbacks_edit)
-        fallback_form.addRow("swww", self.swww_fallbacks_edit)
-        fallback_form.addRow("hyprpaper", self.hyprpaper_fallbacks_edit)
-        fallback_form.addRow("mpvpaper", self.mpvpaper_fallbacks_edit)
-        fallback_form.addRow("gSlapper", self.gslapper_fallbacks_edit)
+        fallback_form.addRow(
+            _form_label(
+                "awww",
+                "Comma-separated fallback chain tried when awww fails. "
+                "Incompatible backends are ignored.",
+            ),
+            self.awww_fallbacks_edit,
+        )
+        fallback_form.addRow(
+            _form_label(
+                "swww",
+                "Comma-separated fallback chain tried when swww fails.",
+            ),
+            self.swww_fallbacks_edit,
+        )
+        fallback_form.addRow(
+            _form_label(
+                "hyprpaper",
+                "Comma-separated fallback chain tried when hyprpaper fails. "
+                "This is opt-in because hyprpaper behaves differently from awww/swww.",
+            ),
+            self.hyprpaper_fallbacks_edit,
+        )
+        fallback_form.addRow(
+            _form_label(
+                "mpvpaper",
+                "Comma-separated fallback chain tried when mpvpaper fails.",
+            ),
+            self.mpvpaper_fallbacks_edit,
+        )
+        fallback_form.addRow(
+            _form_label(
+                "gSlapper",
+                "Comma-separated fallback chain tried when gSlapper fails.",
+            ),
+            self.gslapper_fallbacks_edit,
+        )
         fallback_box = QGroupBox("Fallback Chains")
         fallback_box.setLayout(fallback_form)
         backend_layout.addWidget(fallback_box)
@@ -486,16 +839,43 @@ class WallmuxWindow(QMainWindow):
         self.awww_transition_bezier_edit = QLineEdit()
         self.awww_transition_wave_edit = QLineEdit()
         awww_form = QFormLayout()
-        awww_form.addRow("Command", self.awww_command_edit)
-        awww_form.addRow("Transition", self.awww_transition_type_box)
-        awww_form.addRow("Step", self.awww_transition_step_spin)
-        awww_form.addRow("Duration", self.awww_transition_duration_spin)
-        awww_form.addRow("FPS", self.awww_transition_fps_spin)
-        awww_form.addRow("Angle", self.awww_transition_angle_spin)
-        awww_form.addRow("Position", self.awww_transition_pos_edit)
+        awww_form.addRow(
+            _form_label("Command", "Executable name or path used for the awww backend."),
+            self.awww_command_edit,
+        )
+        awww_form.addRow(
+            _form_label("Transition", "awww transition type used for image changes."),
+            self.awww_transition_type_box,
+        )
+        awww_form.addRow(
+            _form_label("Step", "Transition step value passed through to awww."),
+            self.awww_transition_step_spin,
+        )
+        awww_form.addRow(
+            _form_label("Duration", "Transition duration in seconds."),
+            self.awww_transition_duration_spin,
+        )
+        awww_form.addRow(
+            _form_label("FPS", "Transition frame rate passed through to awww."),
+            self.awww_transition_fps_spin,
+        )
+        awww_form.addRow(
+            _form_label("Angle", "Transition angle used by angle-aware effects."),
+            self.awww_transition_angle_spin,
+        )
+        awww_form.addRow(
+            _form_label("Position", "Transition origin, for example center or cursor."),
+            self.awww_transition_pos_edit,
+        )
         awww_form.addRow("", self.awww_invert_y_check)
-        awww_form.addRow("Bezier", self.awww_transition_bezier_edit)
-        awww_form.addRow("Wave", self.awww_transition_wave_edit)
+        awww_form.addRow(
+            _form_label("Bezier", "Optional custom bezier curve for supported effects."),
+            self.awww_transition_bezier_edit,
+        )
+        awww_form.addRow(
+            _form_label("Wave", "Optional wave parameters for supported effects."),
+            self.awww_transition_wave_edit,
+        )
         awww_box = QGroupBox("awww")
         awww_box.setLayout(awww_form)
         backend_layout.addWidget(awww_box)
@@ -511,16 +891,43 @@ class WallmuxWindow(QMainWindow):
         self.swww_transition_bezier_edit = QLineEdit()
         self.swww_transition_wave_edit = QLineEdit()
         swww_form = QFormLayout()
-        swww_form.addRow("Command", self.swww_command_edit)
-        swww_form.addRow("Transition", self.swww_transition_type_box)
-        swww_form.addRow("Step", self.swww_transition_step_spin)
-        swww_form.addRow("Duration", self.swww_transition_duration_spin)
-        swww_form.addRow("FPS", self.swww_transition_fps_spin)
-        swww_form.addRow("Angle", self.swww_transition_angle_spin)
-        swww_form.addRow("Position", self.swww_transition_pos_edit)
+        swww_form.addRow(
+            _form_label("Command", "Executable name or path used for the swww backend."),
+            self.swww_command_edit,
+        )
+        swww_form.addRow(
+            _form_label("Transition", "swww transition type used for image changes."),
+            self.swww_transition_type_box,
+        )
+        swww_form.addRow(
+            _form_label("Step", "Transition step value passed through to swww."),
+            self.swww_transition_step_spin,
+        )
+        swww_form.addRow(
+            _form_label("Duration", "Transition duration in seconds."),
+            self.swww_transition_duration_spin,
+        )
+        swww_form.addRow(
+            _form_label("FPS", "Transition frame rate passed through to swww."),
+            self.swww_transition_fps_spin,
+        )
+        swww_form.addRow(
+            _form_label("Angle", "Transition angle used by angle-aware effects."),
+            self.swww_transition_angle_spin,
+        )
+        swww_form.addRow(
+            _form_label("Position", "Transition origin, for example center or cursor."),
+            self.swww_transition_pos_edit,
+        )
         swww_form.addRow("", self.swww_invert_y_check)
-        swww_form.addRow("Bezier", self.swww_transition_bezier_edit)
-        swww_form.addRow("Wave", self.swww_transition_wave_edit)
+        swww_form.addRow(
+            _form_label("Bezier", "Optional custom bezier curve for supported effects."),
+            self.swww_transition_bezier_edit,
+        )
+        swww_form.addRow(
+            _form_label("Wave", "Optional wave parameters for supported effects."),
+            self.swww_transition_wave_edit,
+        )
         swww_box = QGroupBox("swww")
         swww_box.setLayout(swww_form)
         backend_layout.addWidget(swww_box)
@@ -530,8 +937,14 @@ class WallmuxWindow(QMainWindow):
         self.hyprpaper_fit_mode_box.setEditable(True)
         self.hyprpaper_fit_mode_box.addItems(["cover", "contain", "tile"])
         hyprpaper_form = QFormLayout()
-        hyprpaper_form.addRow("Command", self.hyprpaper_command_edit)
-        hyprpaper_form.addRow("Fit mode", self.hyprpaper_fit_mode_box)
+        hyprpaper_form.addRow(
+            _form_label("Command", "Executable name or path used for hyprpaperctl."),
+            self.hyprpaper_command_edit,
+        )
+        hyprpaper_form.addRow(
+            _form_label("Fit mode", "hyprpaper display mode for new wallpapers."),
+            self.hyprpaper_fit_mode_box,
+        )
         hyprpaper_box = QGroupBox("hyprpaper")
         hyprpaper_box.setLayout(hyprpaper_form)
         backend_layout.addWidget(hyprpaper_box)
@@ -539,15 +952,27 @@ class WallmuxWindow(QMainWindow):
         self.mpvpaper_command_edit = QLineEdit()
         self.mpvpaper_options_edit = QLineEdit()
         mpvpaper_form = QFormLayout()
-        mpvpaper_form.addRow("Command", self.mpvpaper_command_edit)
-        mpvpaper_form.addRow("Options", self.mpvpaper_options_edit)
+        mpvpaper_form.addRow(
+            _form_label("Command", "Executable name or path used for mpvpaper."),
+            self.mpvpaper_command_edit,
+        )
+        mpvpaper_form.addRow(
+            _form_label(
+                "Options",
+                "mpv options passed to video wallpapers, for example no-audio loop.",
+            ),
+            self.mpvpaper_options_edit,
+        )
         mpvpaper_box = QGroupBox("mpvpaper")
         mpvpaper_box.setLayout(mpvpaper_form)
         backend_layout.addWidget(mpvpaper_box)
 
         self.gslapper_command_edit = QLineEdit()
         gslapper_form = QFormLayout()
-        gslapper_form.addRow("Command", self.gslapper_command_edit)
+        gslapper_form.addRow(
+            _form_label("Command", "Executable name or path used for gSlapper."),
+            self.gslapper_command_edit,
+        )
         gslapper_box = QGroupBox("gSlapper")
         gslapper_box.setLayout(gslapper_form)
         backend_layout.addWidget(gslapper_box)
@@ -591,12 +1016,36 @@ class WallmuxWindow(QMainWindow):
         transition_form.addRow("", self.basic_transitions_check)
         transition_form.addRow("", self.basic_image_bridge_check)
         transition_form.addRow("", self.fade_overlay_check)
-        transition_form.addRow("Fade Command", self.fade_command_edit)
+        transition_form.addRow(
+            _form_label(
+                "Fade Command",
+                "Optional external command used for fade helper transitions.",
+            ),
+            self.fade_command_edit,
+        )
         transition_form.addRow("", self.screenshot_bridge_check)
-        transition_form.addRow("Screenshot Command", self.screenshot_command_edit)
+        transition_form.addRow(
+            _form_label(
+                "Screenshot Command",
+                "Optional external command used for screenshot bridge transitions.",
+            ),
+            self.screenshot_command_edit,
+        )
         transition_form.addRow("", self.quickshell_overlay_check)
-        transition_form.addRow("QuickShell Command", self.quickshell_command_edit)
-        transition_form.addRow("Effect Timeout", self.transition_effect_timeout_spin)
+        transition_form.addRow(
+            _form_label(
+                "QuickShell Command",
+                "Optional external command used to trigger a QuickShell overlay/helper.",
+            ),
+            self.quickshell_command_edit,
+        )
+        transition_form.addRow(
+            _form_label(
+                "Effect Timeout",
+                "Maximum time Wallmux waits for external transition helpers.",
+            ),
+            self.transition_effect_timeout_spin,
+        )
         transition_group = QGroupBox("Transition Effects")
         transition_group.setLayout(transition_form)
         transitions_layout.addWidget(transition_group)
@@ -608,6 +1057,7 @@ class WallmuxWindow(QMainWindow):
 
         self.settings_tabs.addTab(general_page, "General")
         self.settings_tabs.addTab(library_page, "Library")
+        self.settings_tabs.addTab(profiles_page, "Profiles")
         self.settings_tabs.addTab(backend_page, "Backends")
         self.settings_tabs.addTab(autoswitch_page, "Auto")
         self.settings_tabs.addTab(inhibition_page, "Inhibition")
@@ -628,13 +1078,17 @@ class WallmuxWindow(QMainWindow):
         return scroll, layout
 
     def _load_initial_folder(self) -> None:
-        dirs = self.config.get("general", {}).get("wallpaper_dirs", [])
+        dirs = self._configured_wallpaper_dirs()
         for raw_dir in dirs:
             path = Path(raw_dir).expanduser()
             if path.exists() and path.is_dir():
-                self.load_folder(path)
+                self.load_configured_library()
                 return
         self.populate_grid()
+
+    def _configured_wallpaper_dirs(self) -> list[str]:
+        config = effective_config_for_profile(self.config)
+        return list(config.get("general", {}).get("wallpaper_dirs", []))
 
     def _load_monitors(self) -> None:
         self.monitor_box.clear()
@@ -651,12 +1105,42 @@ class WallmuxWindow(QMainWindow):
     def load_folder(self, folder: Path) -> None:
         self.current_folder = folder
         self.status.showMessage(f"Scanning {folder}")
+        config = effective_config_for_profile(self.config)
         self.items = scan_wallpaper_dir(
             folder,
-            backend_rules=self.config.get("backend_rules", {}),
+            backend_rules=config.get("backend_rules", {}),
         )
+        active = get_active_profile(self.config)
+        self.items = [item for item in self.items if profile_matches_filters(active, item)]
         self.populate_grid()
         self.status.showMessage(f"{len(self.items)} wallpapers in {folder}", 5000)
+        self.grid.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def load_configured_library(self) -> None:
+        self.current_folder = None
+        config = effective_config_for_profile(self.config)
+        dirs = config.get("general", {}).get("wallpaper_dirs", [])
+        active = get_active_profile(self.config)
+        self.status.showMessage("Scanning configured wallpaper folders")
+        items: list[WallpaperItem] = []
+        for raw_dir in dirs:
+            items.extend(
+                scan_wallpaper_dir(
+                    Path(raw_dir),
+                    backend_rules=config.get("backend_rules", {}),
+                )
+            )
+        self.items = sorted(
+            {
+                str(item.path.expanduser().resolve()): item
+                for item in items
+                if profile_matches_filters(active, item)
+            }.values(),
+            key=lambda item: item.path.name.casefold(),
+        )
+        self.populate_grid()
+        label = f" for {active.label}" if active else ""
+        self.status.showMessage(f"{len(self.items)} wallpapers{label}", 5000)
         self.grid.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def closeEvent(self, event) -> None:
@@ -667,8 +1151,17 @@ class WallmuxWindow(QMainWindow):
         if self.current_folder is not None:
             self.load_folder(self.current_folder)
         else:
-            self.populate_grid()
+            self.load_configured_library()
         self._load_monitors()
+
+    def show_profile_picker(self) -> None:
+        switched, label = run_profile_picker_dialog(self, self.config)
+        if not switched:
+            return
+        self.config = load_config()
+        self.refresh_settings()
+        self.load_configured_library()
+        self.status.showMessage(f"Profile active: {label}", 5000)
 
     def populate_grid(self) -> None:
         self.grid.clear()
@@ -731,11 +1224,12 @@ class WallmuxWindow(QMainWindow):
             self._show_set_results(response["results"])
             self._close_after_successful_set()
         except DaemonUnavailable:
+            config = effective_config_for_profile(self.config)
             try:
                 if monitor == ALL_MONITORS:
                     results = set_wallpaper_for_all(
                         self.selected_item.path,
-                        config=self.config,
+                        config=config,
                         backend_override=backend,
                         mode=all_monitor_mode,
                     )
@@ -743,7 +1237,7 @@ class WallmuxWindow(QMainWindow):
                     result = set_wallpaper(
                         self.selected_item.path,
                         monitor or self.monitor_box.currentText(),
-                        config=self.config,
+                        config=config,
                         backend_override=backend,
                     )
                     results = [result]
@@ -812,6 +1306,269 @@ class WallmuxWindow(QMainWindow):
         self.config["general"]["wallpaper_dirs"] = [item for item in dirs if item != folder]
         write_config(self.config, user_config_file())
         self.refresh_settings()
+
+    def add_profile_settings(self) -> None:
+        entries = self.config.setdefault("profiles", {}).setdefault("entries", [])
+        entries.append(
+            {
+                "name": "new-profile",
+                "category": "",
+                "subcategory": "",
+                "color": "",
+                "wallpaper_dirs": [],
+                "backend_rules": {},
+                "autoswitch_mode": "",
+                "filter_query": "",
+                "filter_types": [],
+                "before_switch": [],
+                "after_switch": [],
+                "include_parent_hooks": False,
+            }
+        )
+        write_config(self.config, user_config_file())
+        self.refresh_profile_settings(select_index=len(entries) - 1)
+
+    def import_profile_category_settings(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Import Profile Category Folder",
+        )
+        if not selected:
+            return
+
+        try:
+            new_entries = profile_entries_from_category_root(Path(selected))
+        except ValueError as error:
+            QMessageBox.warning(self, "Wallmux", str(error))
+            return
+        if not new_entries:
+            QMessageBox.information(
+                self,
+                "Wallmux",
+                "No child folders found. Add subfolders such as Anime or Landscape first.",
+            )
+            return
+
+        entries = self.config.setdefault("profiles", {}).setdefault("entries", [])
+        existing_keys = {
+            (
+                str(entry.get("category", "")),
+                str(entry.get("subcategory", "")),
+                str(entry.get("name", "")),
+            )
+            for entry in entries
+        }
+        added = 0
+        for entry in new_entries:
+            key = (
+                str(entry.get("category", "")),
+                str(entry.get("subcategory", "")),
+                str(entry.get("name", "")),
+            )
+            if key in existing_keys:
+                continue
+            entries.append(entry)
+            existing_keys.add(key)
+            added += 1
+
+        write_config(self.config, user_config_file())
+        self.refresh_profile_settings(select_index=max(0, len(entries) - added))
+        self.status.showMessage(f"Imported {added} profile(s)", 5000)
+
+    def _connect_profile_autosave(self) -> None:
+        for line_edit in (
+            self.profile_name_edit,
+            self.profile_category_edit,
+            self.profile_subcategory_edit,
+            self.profile_color_edit,
+            self.profile_filter_query_edit,
+            self.profile_filter_types_edit,
+        ):
+            line_edit.textEdited.connect(self.schedule_profile_autosave)
+        for combo in (
+            self.profile_image_backend_box,
+            self.profile_gif_backend_box,
+            self.profile_video_backend_box,
+            self.profile_autoswitch_mode_box,
+        ):
+            combo.currentIndexChanged.connect(self.schedule_profile_autosave)
+        self.profile_before_switch_edit.textChanged.connect(self.schedule_profile_autosave)
+        self.profile_after_switch_edit.textChanged.connect(self.schedule_profile_autosave)
+        self.profile_include_parent_hooks_check.toggled.connect(self.schedule_profile_autosave)
+
+    def choose_profile_color(self) -> None:
+        current = QColor(self.profile_color_edit.text().strip())
+        if not current.isValid():
+            current = QColor("#7ab574")
+        color = QColorDialog.getColor(current, self, "Choose Profile Color")
+        if not color.isValid():
+            return
+        self.profile_color_edit.setText(color.name())
+        self.profile_autosave_timer.stop()
+        self.autosave_profile_settings()
+
+    def remove_profile_settings(self) -> None:
+        row = self._current_profile_row()
+        entries = self.config.setdefault("profiles", {}).setdefault("entries", [])
+        if row < 0 or row >= len(entries):
+            return
+
+        removed = entries.pop(row)
+        profiles = self.config.setdefault("profiles", {})
+        if profiles.get("active") == removed.get("name"):
+            profiles["active"] = ""
+            profiles["active_category"] = ""
+            profiles["active_subcategory"] = ""
+        write_config(self.config, user_config_file())
+        self.refresh_profile_settings(select_index=min(row, len(entries) - 1))
+        self.status.showMessage("Profile removed", 5000)
+
+    def add_profile_dir_settings(self) -> None:
+        selected = QFileDialog.getExistingDirectory(self, "Add Profile Wallpaper Folder")
+        if not selected:
+            return
+        existing = {
+            self.profile_dirs_list.item(index).text()
+            for index in range(self.profile_dirs_list.count())
+        }
+        if selected not in existing:
+            self.profile_dirs_list.addItem(selected)
+            self.schedule_profile_autosave()
+
+    def remove_profile_dir_settings(self) -> None:
+        for item in self.profile_dirs_list.selectedItems():
+            row = self.profile_dirs_list.row(item)
+            self.profile_dirs_list.takeItem(row)
+        self.schedule_profile_autosave()
+
+    def save_profile_settings(self) -> None:
+        self.profile_autosave_timer.stop()
+        row = self._current_profile_row()
+        entries = self.config.setdefault("profiles", {}).setdefault("entries", [])
+        if row < 0 or row >= len(entries):
+            return
+
+        name = self.profile_name_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Wallmux", "Profile name is required.")
+            return
+
+        entries[row] = self._profile_editor_entry()
+        profiles = self.config.setdefault("profiles", {})
+        if profiles.get("active") == entries[row]["name"]:
+            profiles["active_category"] = entries[row]["category"]
+            profiles["active_subcategory"] = entries[row]["subcategory"]
+        write_config(self.config, user_config_file())
+        self.config = load_config()
+        try:
+            send_request({"command": "reload"})
+        except DaemonUnavailable:
+            pass
+        self.refresh_profile_settings(select_index=row)
+        self.refresh_library()
+        self.status.showMessage("Profile saved", 5000)
+
+    def schedule_profile_autosave(self, *_args) -> None:
+        if self.profile_settings_loading:
+            return
+        if self._current_profile_row() < 0:
+            return
+        self.profile_autosave_timer.start()
+
+    def autosave_profile_settings(self) -> None:
+        row = self._current_profile_row()
+        entries = self.config.setdefault("profiles", {}).setdefault("entries", [])
+        if row < 0 or row >= len(entries):
+            return
+        if not self.profile_name_edit.text().strip():
+            self.status.showMessage("Profile name is required before autosave", 5000)
+            return
+
+        previous_entry = dict(entries[row])
+        entries[row] = self._profile_editor_entry()
+        profiles = self.config.setdefault("profiles", {})
+        if _profile_entry_is_active(previous_entry, profiles):
+            profiles["active"] = entries[row]["name"]
+            profiles["active_category"] = entries[row]["category"]
+            profiles["active_subcategory"] = entries[row]["subcategory"]
+        write_config(self.config, user_config_file())
+        self.config = load_config()
+        profiles = self.config.setdefault("profiles", {})
+        entries = profiles.setdefault("entries", [])
+        try:
+            send_request({"command": "reload"})
+        except DaemonUnavailable:
+            pass
+        current_item = self.profile_tree.currentItem()
+        if current_item is not None and _profile_tree_item_row(current_item) == row:
+            current_item.setText(
+                0,
+                _profile_tree_label(
+                    entries[row],
+                    active=_profile_entry_is_active(entries[row], profiles),
+                ),
+            )
+            _apply_profile_swatch(current_item, str(entries[row].get("color", "")))
+        self.status.showMessage("Profile autosaved", 2500)
+
+    def set_active_profile_settings(self) -> None:
+        if self.profile_autosave_timer.isActive():
+            self.profile_autosave_timer.stop()
+            self.autosave_profile_settings()
+        row = self._current_profile_row()
+        entries = self.config.setdefault("profiles", {}).setdefault("entries", [])
+        if row < 0 or row >= len(entries):
+            return
+
+        entry = entries[row]
+        try:
+            switch_profile(
+                str(entry.get("name", "")),
+                category=str(entry.get("category", "")),
+                subcategory=str(entry.get("subcategory", "")),
+                config=self.config,
+                after_write=_reload_daemon_quietly,
+            )
+        except ValueError as error:
+            QMessageBox.critical(self, "Wallmux", str(error))
+            return
+        self.config = load_config()
+        try:
+            send_request({"command": "reload"})
+        except DaemonUnavailable:
+            pass
+        self.refresh_profile_settings(select_index=row)
+        self.load_configured_library()
+        self.status.showMessage(f"Profile active: {_profile_entry_label(entry)}", 5000)
+
+    def _profile_editor_entry(self) -> dict:
+        backend_rules = {}
+        for key, combo in (
+            ("image", self.profile_image_backend_box),
+            ("gif", self.profile_gif_backend_box),
+            ("video", self.profile_video_backend_box),
+        ):
+            value = combo.currentData()
+            if value:
+                backend_rules[key] = value
+
+        return {
+            "name": self.profile_name_edit.text().strip(),
+            "category": self.profile_category_edit.text().strip(),
+            "subcategory": self.profile_subcategory_edit.text().strip(),
+            "color": _normalize_profile_color(self.profile_color_edit.text()),
+            "wallpaper_dirs": [
+                self.profile_dirs_list.item(index).text()
+                for index in range(self.profile_dirs_list.count())
+            ],
+            "backend_rules": backend_rules,
+            "autoswitch_mode": self.profile_autoswitch_mode_box.currentData() or "",
+            "filter_query": self.profile_filter_query_edit.text().strip(),
+            "filter_types": self._comma_values(self.profile_filter_types_edit.text()),
+            "before_switch": self._pattern_lines(self.profile_before_switch_edit),
+            "after_switch": self._pattern_lines(self.profile_after_switch_edit),
+            "include_parent_hooks": self.profile_include_parent_hooks_check.isChecked(),
+        }
 
     def save_backend_settings(self) -> None:
         self.config.setdefault("general", {})["all_monitor_mode"] = (
@@ -964,6 +1721,7 @@ class WallmuxWindow(QMainWindow):
         for folder in self.config.get("general", {}).get("wallpaper_dirs", []):
             self.folder_list.addItem(folder)
         self.refresh_gui_settings()
+        self.refresh_profile_settings()
         self.refresh_backend_settings()
         self.refresh_autoswitch_settings()
         self.refresh_inhibition_settings()
@@ -975,6 +1733,152 @@ class WallmuxWindow(QMainWindow):
         self.close_after_set_check.blockSignals(True)
         self.close_after_set_check.setChecked(bool(gui.get("close_after_set", False)))
         self.close_after_set_check.blockSignals(False)
+
+    def refresh_profile_settings(self, *, select_index: int | None = None) -> None:
+        profiles = self.config.setdefault("profiles", {})
+        entries = profiles.setdefault("entries", [])
+        active_name = str(profiles.get("active", ""))
+        active_category = str(profiles.get("active_category", ""))
+        active_subcategory = str(profiles.get("active_subcategory", ""))
+
+        current_row = self._current_profile_row() if select_index is None else select_index
+        self.profile_tree.blockSignals(True)
+        self.profile_tree.clear()
+        parent_items: dict[str, QTreeWidgetItem] = {}
+        pending_selection: QTreeWidgetItem | None = None
+        for index, entry in enumerate(entries):
+            if str(entry.get("category", "")):
+                continue
+            name = str(entry.get("name", ""))
+            if not name:
+                continue
+            is_active = (
+                entry.get("name") == active_name
+                and str(entry.get("category", "")) == active_category
+                and str(entry.get("subcategory", "")) == active_subcategory
+            )
+            parent = QTreeWidgetItem([_profile_tree_label(entry, active=is_active)])
+            parent.setData(0, Qt.ItemDataRole.UserRole, index)
+            _apply_profile_swatch(parent, str(entry.get("color", "")))
+            parent.setExpanded(True)
+            self.profile_tree.addTopLevelItem(parent)
+            parent_items[name] = parent
+            if index == current_row:
+                pending_selection = parent
+
+        for index, entry in enumerate(entries):
+            if not str(entry.get("category", "")):
+                continue
+            is_active = (
+                entry.get("name") == active_name
+                and str(entry.get("category", "")) == active_category
+                and str(entry.get("subcategory", "")) == active_subcategory
+            )
+            item = QTreeWidgetItem([_profile_tree_label(entry, active=is_active)])
+            item.setData(0, Qt.ItemDataRole.UserRole, index)
+            _apply_profile_swatch(item, str(entry.get("color", "")))
+            category = str(entry.get("category", ""))
+            if category:
+                parent = parent_items.get(category)
+                if parent is None:
+                    parent = QTreeWidgetItem([category])
+                    parent.setData(0, Qt.ItemDataRole.UserRole, -1)
+                    self.profile_tree.addTopLevelItem(parent)
+                    parent_items[category] = parent
+                parent.addChild(item)
+                parent.setExpanded(True)
+            if index == current_row:
+                pending_selection = item
+
+        if pending_selection is not None:
+            self.profile_tree.setCurrentItem(pending_selection)
+        self.profile_tree.blockSignals(False)
+        self.select_profile_settings(self._current_profile_row())
+
+    def select_profile_tree_item(self, current, _previous) -> None:
+        if current is None:
+            self.select_profile_settings(-1)
+            return
+        self.select_profile_settings(_profile_tree_item_row(current))
+
+    def _current_profile_row(self) -> int:
+        item = self.profile_tree.currentItem()
+        if item is None:
+            return -1
+        return _profile_tree_item_row(item)
+
+    def select_profile_settings(self, row: int) -> None:
+        self.profile_settings_loading = True
+        entries = self.config.setdefault("profiles", {}).setdefault("entries", [])
+        enabled = 0 <= row < len(entries)
+        try:
+            for widget in (
+            self.profile_name_edit,
+            self.profile_category_edit,
+            self.profile_subcategory_edit,
+            self.profile_color_edit,
+            self.profile_dirs_list,
+                self.profile_image_backend_box,
+                self.profile_gif_backend_box,
+                self.profile_video_backend_box,
+                self.profile_autoswitch_mode_box,
+                self.profile_filter_query_edit,
+                self.profile_filter_types_edit,
+                self.profile_before_switch_edit,
+                self.profile_after_switch_edit,
+                self.profile_include_parent_hooks_check,
+            ):
+                widget.setEnabled(enabled)
+
+            if not enabled:
+                self.profile_name_edit.clear()
+                self.profile_category_edit.clear()
+                self.profile_subcategory_edit.clear()
+                self.profile_color_edit.clear()
+                self.profile_dirs_list.clear()
+                self.profile_filter_query_edit.clear()
+                self.profile_filter_types_edit.clear()
+                self.profile_before_switch_edit.clear()
+                self.profile_after_switch_edit.clear()
+                self.profile_include_parent_hooks_check.setChecked(False)
+                return
+
+            entry = entries[row]
+            self.profile_name_edit.setText(str(entry.get("name", "")))
+            self.profile_category_edit.setText(str(entry.get("category", "")))
+            self.profile_subcategory_edit.setText(str(entry.get("subcategory", "")))
+            self.profile_color_edit.setText(str(entry.get("color", "")))
+            self.profile_dirs_list.clear()
+            for folder in entry.get("wallpaper_dirs", []):
+                self.profile_dirs_list.addItem(str(folder))
+            backend_rules = entry.get("backend_rules", {})
+            self._set_combo_data(
+                self.profile_image_backend_box,
+                str(backend_rules.get("image", "")),
+            )
+            self._set_combo_data(
+                self.profile_gif_backend_box,
+                str(backend_rules.get("gif", "")),
+            )
+            self._set_combo_data(
+                self.profile_video_backend_box,
+                str(backend_rules.get("video", "")),
+            )
+            self._set_combo_data(
+                self.profile_autoswitch_mode_box,
+                str(entry.get("autoswitch_mode", "")),
+            )
+            self.profile_filter_query_edit.setText(str(entry.get("filter_query", "")))
+            self.profile_filter_types_edit.setText(", ".join(entry.get("filter_types", [])))
+            self.profile_before_switch_edit.setPlainText(
+                "\n".join(entry.get("before_switch", []))
+            )
+            self.profile_after_switch_edit.setPlainText("\n".join(entry.get("after_switch", [])))
+            self.profile_include_parent_hooks_check.setChecked(
+                bool(entry.get("include_parent_hooks", False))
+            )
+        finally:
+            self.profile_settings_loading = False
 
     def refresh_daemon_status(self, running: bool | None = None) -> None:
         if running is None:
@@ -1052,6 +1956,7 @@ class WallmuxWindow(QMainWindow):
                 "Autoswitch",
                 f"enabled: {autoswitch.get('enabled')}",
                 f"mode: {autoswitch.get('mode')}",
+                f"profile: {autoswitch.get('profile') or 'none'}",
                 f"target: {autoswitch.get('target')}",
                 f"monitor: {autoswitch.get('monitor')}",
                 f"next switch: {_format_seconds(autoswitch.get('next_switch_seconds'))}",
@@ -1240,6 +2145,9 @@ class WallmuxWindow(QMainWindow):
             return ", ".join(str(item) for item in value)
         return ""
 
+    def _comma_values(self, text: str) -> list[str]:
+        return [item.strip() for item in text.split(",") if item.strip()]
+
     def _transition_type_combo(self) -> QComboBox:
         combo = QComboBox()
         combo.setEditable(True)
@@ -1416,7 +2324,12 @@ def main() -> int:
 
     try:
         theme_debug = THEME_DEBUG_ARG in sys.argv
-        argv = [arg for arg in sys.argv if arg != THEME_DEBUG_ARG]
+        profile_picker = PROFILE_PICKER_ARG in sys.argv
+        argv = [
+            arg
+            for arg in sys.argv
+            if arg not in {THEME_DEBUG_ARG, PROFILE_PICKER_ARG}
+        ]
 
         QApplication.setDesktopSettingsAware(True)
         _add_system_qt_plugin_paths()
@@ -1428,6 +2341,10 @@ def main() -> int:
 
         if theme_debug:
             _print_theme_debug(app)
+            return 0
+
+        if profile_picker:
+            run_profile_picker_dialog(None)
             return 0
 
         window = WallmuxWindow()
@@ -1626,6 +2543,350 @@ def _format_seconds(value) -> str:
         return f"{float(value):.1f}s"
     except (TypeError, ValueError):
         return str(value)
+
+
+def _help_marker(tooltip: str) -> QLabel:
+    label = QLabel("?")
+    label.setToolTip(tooltip)
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    label.setFixedSize(18, 18)
+    label.setStyleSheet(
+        "QLabel { border: 1px solid palette(mid); border-radius: 9px; "
+        "font-weight: 600; color: palette(text); }"
+    )
+    return label
+
+
+def _form_label(text: str, tooltip: str) -> QWidget:
+    widget = QWidget()
+    layout = QHBoxLayout(widget)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(6)
+    layout.addWidget(QLabel(text))
+    layout.addWidget(_help_marker(tooltip))
+    layout.addStretch(1)
+    return widget
+
+
+def _profile_entry_label(entry: dict) -> str:
+    name = str(entry.get("name", ""))
+    category = str(entry.get("category", ""))
+    subcategory = str(entry.get("subcategory", ""))
+    if category and name == subcategory:
+        return f"{category} / {name}"
+    parts = [
+        category,
+        subcategory,
+        name,
+    ]
+    return " / ".join(part for part in parts if part) or "unnamed"
+
+
+def _profile_tree_label(entry: dict, *, active: bool = False) -> str:
+    name = str(entry.get("name", "")) or "unnamed"
+    category = str(entry.get("category", ""))
+    label = name if category else _profile_entry_label(entry)
+    return f"* {label}" if active else label
+
+
+def _profile_entry_is_active(entry: dict, profiles: dict) -> bool:
+    return (
+        entry.get("name") == profiles.get("active")
+        and str(entry.get("category", "")) == str(profiles.get("active_category", ""))
+        and str(entry.get("subcategory", "")) == str(profiles.get("active_subcategory", ""))
+    )
+
+
+def _normalize_profile_color(value: str) -> str:
+    color = QColor(value.strip())
+    return color.name() if color.isValid() else ""
+
+
+def _profile_color_icon(value: str) -> QIcon:
+    color = QColor(value)
+    if not color.isValid():
+        return QIcon()
+    pixmap = QPixmap(16, 16)
+    pixmap.fill(color)
+    return QIcon(pixmap)
+
+
+def _apply_profile_swatch(item: QTreeWidgetItem, value: str) -> None:
+    item.setIcon(0, _profile_color_icon(value))
+
+
+def _profile_tree_item_row(item: QTreeWidgetItem) -> int:
+    value = item.data(0, Qt.ItemDataRole.UserRole)
+    return -1 if value is None else int(value)
+
+
+def _reload_daemon_quietly(_profile=None) -> None:
+    try:
+        send_request({"command": "reload"})
+    except DaemonUnavailable:
+        pass
+
+
+def run_profile_picker_dialog(
+    parent: QWidget | None,
+    config: dict | None = None,
+) -> tuple[bool, str]:
+    config = config or load_config()
+    profiles = list_profiles(config)
+    if not profiles:
+        QMessageBox.information(parent, "Wallmux", "No profiles are configured.")
+        return False, ""
+
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Wallmux Profiles")
+    dialog.setWindowFlag(Qt.WindowType.Dialog, True)
+    dialog.resize(460, 520)
+    layout = QVBoxLayout(dialog)
+
+    search = QLineEdit()
+    search.setPlaceholderText("Search profiles")
+    layout.addWidget(search)
+
+    tree = QTreeWidget()
+    tree.setMinimumSize(420, 380)
+    tree.setHeaderHidden(True)
+    tree.setUniformRowHeights(True)
+    layout.addWidget(tree)
+
+    hint = QLabel("Enter switches selected profile")
+    hint.setStyleSheet("color: palette(mid);")
+    layout.addWidget(hint)
+
+    active = get_active_profile(config)
+    _populate_profile_picker_tree(tree, profiles, active)
+    _select_first_profile_picker_item(tree)
+
+    buttons = QHBoxLayout()
+    switch_button = QPushButton("Switch")
+    cancel_button = QPushButton("Cancel")
+    buttons.addStretch(1)
+    buttons.addWidget(switch_button)
+    buttons.addWidget(cancel_button)
+    layout.addLayout(buttons)
+
+    def accept_selection() -> None:
+        _accept_profile_picker_selection(dialog, tree)
+
+    search.installEventFilter(_ProfilePickerSearchFilter(search, tree, accept_selection))
+    switch_button.clicked.connect(accept_selection)
+    cancel_button.clicked.connect(dialog.reject)
+    tree.itemActivated.connect(lambda _item, _column: accept_selection())
+    search.textChanged.connect(lambda text: _filter_profile_picker_tree(tree, text))
+    search.returnPressed.connect(accept_selection)
+    search.setFocus()
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return False, ""
+
+    profile = _profile_from_picker_tree(tree)
+    if profile is None:
+        return False, ""
+    try:
+        switch_profile(
+            profile.name,
+            category=profile.category,
+            subcategory=profile.subcategory,
+            config=config,
+            after_write=_reload_daemon_quietly,
+        )
+    except ValueError as error:
+        QMessageBox.critical(parent, "Wallmux", str(error))
+        return False, ""
+
+    return True, profile.label
+
+
+class _ProfilePickerSearchFilter(QObject):
+    def __init__(self, parent: QObject, tree: QTreeWidget, accept_selection) -> None:
+        super().__init__(parent)
+        self.tree = tree
+        self.accept_selection = accept_selection
+
+    def eventFilter(self, watched: QObject, event) -> bool:
+        if event.type() != event.Type.KeyPress:
+            return super().eventFilter(watched, event)
+        key = event.key()
+        if key in {Qt.Key.Key_Return, Qt.Key.Key_Enter}:
+            self.accept_selection()
+            return True
+        if key in {
+            Qt.Key.Key_Down,
+            Qt.Key.Key_Up,
+            Qt.Key.Key_PageDown,
+            Qt.Key.Key_PageUp,
+            Qt.Key.Key_Home,
+            Qt.Key.Key_End,
+        }:
+            _move_profile_picker_selection(self.tree, key)
+            return True
+        return super().eventFilter(watched, event)
+
+
+def _accept_profile_picker_selection(dialog: QDialog, tree: QTreeWidget) -> None:
+    if _profile_from_picker_tree(tree) is not None:
+        dialog.accept()
+
+
+def _profile_from_picker_tree(tree: QTreeWidget):
+    selected = tree.currentItem()
+    if selected is None:
+        _select_first_profile_picker_item(tree)
+        selected = tree.currentItem()
+    if selected is None:
+        return None
+    profile = selected.data(0, Qt.ItemDataRole.UserRole)
+    if profile is not None:
+        return profile
+    selected_child = _first_visible_profile_child(selected)
+    if selected_child is None:
+        return None
+    tree.setCurrentItem(selected_child)
+    return selected_child.data(0, Qt.ItemDataRole.UserRole)
+
+
+def _populate_profile_picker_tree(tree: QTreeWidget, profiles: list, active) -> None:
+    parent_items: dict[str, QTreeWidgetItem] = {}
+    pending_selection: QTreeWidgetItem | None = None
+    for profile in profiles:
+        if profile.category:
+            continue
+        item = _profile_picker_item(profile, active=active and profile == active)
+        tree.addTopLevelItem(item)
+        parent_items[profile.name] = item
+        if active and profile == active:
+            pending_selection = item
+
+    for profile in profiles:
+        if not profile.category:
+            continue
+        parent_item = parent_items.get(profile.category)
+        if parent_item is None:
+            parent_item = QTreeWidgetItem([profile.category])
+            parent_item.setData(0, Qt.ItemDataRole.UserRole, None)
+            tree.addTopLevelItem(parent_item)
+            parent_items[profile.category] = parent_item
+        child = _profile_picker_item(profile, active=active and profile == active)
+        parent_item.addChild(child)
+        parent_item.setExpanded(True)
+        if active and profile == active:
+            pending_selection = child
+
+    tree.expandAll()
+    if pending_selection is not None:
+        tree.setCurrentItem(pending_selection)
+
+
+def _profile_picker_item(profile, *, active: bool = False) -> QTreeWidgetItem:
+    label = profile.name if profile.category else profile.label
+    if active:
+        label = f"* {label}"
+    item = QTreeWidgetItem([label])
+    item.setData(0, Qt.ItemDataRole.UserRole, profile)
+    item.setToolTip(0, profile.label)
+    _apply_profile_swatch(item, profile.color)
+    return item
+
+
+def _filter_profile_picker_tree(tree: QTreeWidget, query: str) -> None:
+    normalized = query.casefold().strip()
+    first_match: QTreeWidgetItem | None = None
+    for top_index in range(tree.topLevelItemCount()):
+        top = tree.topLevelItem(top_index)
+        top_matches = _profile_picker_item_matches(top, normalized)
+        visible_child_count = 0
+        for child_index in range(top.childCount()):
+            child = top.child(child_index)
+            child_matches = _profile_picker_item_matches(child, normalized)
+            child.setHidden(not child_matches)
+            if child_matches:
+                visible_child_count += 1
+                first_match = first_match or child
+        visible = not normalized or top_matches or visible_child_count > 0
+        top.setHidden(not visible)
+        top.setExpanded(bool(normalized) or visible_child_count > 0)
+        if visible and top_matches:
+            first_match = first_match or top
+
+    if first_match is not None:
+        tree.setCurrentItem(first_match)
+
+
+def _profile_picker_item_matches(item: QTreeWidgetItem, query: str) -> bool:
+    if not query:
+        return True
+    profile = item.data(0, Qt.ItemDataRole.UserRole)
+    haystack = item.text(0)
+    if profile is not None:
+        haystack = f"{profile.name} {profile.category} {profile.subcategory} {profile.label}"
+    return query in haystack.casefold()
+
+
+def _select_first_profile_picker_item(tree: QTreeWidget) -> None:
+    if tree.currentItem() is not None:
+        return
+    for top_index in range(tree.topLevelItemCount()):
+        top = tree.topLevelItem(top_index)
+        if top.data(0, Qt.ItemDataRole.UserRole) is not None:
+            tree.setCurrentItem(top)
+            return
+        child = _first_visible_profile_child(top)
+        if child is not None:
+            tree.setCurrentItem(child)
+            return
+
+
+def _move_profile_picker_selection(tree: QTreeWidget, key: int) -> None:
+    items = _visible_profile_picker_items(tree)
+    if not items:
+        return
+    current = tree.currentItem()
+    try:
+        index = items.index(current)
+    except ValueError:
+        index = 0
+
+    if key == Qt.Key.Key_Down:
+        index = min(index + 1, len(items) - 1)
+    elif key == Qt.Key.Key_Up:
+        index = max(index - 1, 0)
+    elif key == Qt.Key.Key_PageDown:
+        index = min(index + 8, len(items) - 1)
+    elif key == Qt.Key.Key_PageUp:
+        index = max(index - 8, 0)
+    elif key == Qt.Key.Key_Home:
+        index = 0
+    elif key == Qt.Key.Key_End:
+        index = len(items) - 1
+
+    tree.setCurrentItem(items[index])
+    tree.scrollToItem(items[index])
+
+
+def _visible_profile_picker_items(tree: QTreeWidget) -> list[QTreeWidgetItem]:
+    items: list[QTreeWidgetItem] = []
+    for top_index in range(tree.topLevelItemCount()):
+        top = tree.topLevelItem(top_index)
+        if top.isHidden():
+            continue
+        if top.data(0, Qt.ItemDataRole.UserRole) is not None:
+            items.append(top)
+        for child_index in range(top.childCount()):
+            child = top.child(child_index)
+            if not child.isHidden() and child.data(0, Qt.ItemDataRole.UserRole) is not None:
+                items.append(child)
+    return items
+
+
+def _first_visible_profile_child(item: QTreeWidgetItem) -> QTreeWidgetItem | None:
+    for child_index in range(item.childCount()):
+        child = item.child(child_index)
+        if not child.isHidden() and child.data(0, Qt.ItemDataRole.UserRole) is not None:
+            return child
+    return None
 
 
 if __name__ == "__main__":

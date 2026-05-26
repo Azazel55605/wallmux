@@ -35,6 +35,8 @@ wallmuxctl random --all
 wallmuxctl autoswitch status
 wallmuxctl autoswitch set --enable --interval 300 --mode random --target all
 wallmuxctl autoswitch now
+wallmuxctl profile list
+wallmuxctl profile use landscape --category orange
 wallmuxctl doctor
 wallmuxctl doctor video
 wallmuxctl reload
@@ -179,6 +181,125 @@ interval_seconds = 300
 mode = "random" # random, name-up, or name-down
 target = "all"  # all, focused, or monitor
 monitor = ""
+```
+
+## Profiles
+
+Profiles let you switch between named wallpaper sets without rewriting your global folder list by hand. A parent profile can represent a whole folder tree, while child profiles act as scoped subprofiles inside it.
+
+Profiles are stored separately from the main config in `~/.config/wallmux/wallmux-profiles.toml`. If an older `config.toml` still contains a `[profiles]` section, Wallmux migrates it automatically the next time the config is loaded.
+
+For example, importing a folder tree like `green/Anime` and `green/Landscape` creates a parent `green` profile that points at the `green` folder and therefore includes all wallpapers below it. It also creates child profiles `green / Anime` and `green / Landscape`, each pointing at only that child folder.
+
+Example `wallmux-profiles.toml`:
+
+```toml
+active = "green"
+active_category = ""
+active_subcategory = ""
+
+[[entries]]
+name = "green"
+category = ""
+subcategory = ""
+color = "#7ab574"
+wallpaper_dirs = ["~/Pictures/Wallpapers/green"]
+backend_rules = {}
+autoswitch_mode = "random"
+filter_query = ""
+filter_types = []
+before_switch = []
+after_switch = []
+include_parent_hooks = false
+
+[[entries]]
+name = "Anime"
+category = "green"
+subcategory = "Anime"
+color = "#7ab574"
+wallpaper_dirs = ["~/Pictures/Wallpapers/green/Anime"]
+backend_rules = { image = "awww", gif = "awww", video = "mpvpaper" }
+autoswitch_mode = "random"
+filter_query = ""
+filter_types = []
+before_switch = []
+after_switch = []
+```
+
+Useful commands:
+
+```bash
+wallmuxctl profile list
+wallmuxctl profile active
+wallmuxctl profile use green
+wallmuxctl profile use Anime --category green
+```
+
+The GUI has a searchable tree profile picker in the browser toolbar, `Ctrl+P` opens it from within Wallmux, and `wallmux-gui profile-picker` opens only the picker as a small popup. Profiles can be created and edited under `Settings -> Profiles`, where the editor is split into Identity, Folders, Backends, Filters, and Hooks tabs. The profile settings list is shown as a tree. `Import Folder Tree` can read an existing structure such as `green/Anime` and `green/Landscape`, creating the parent/all profile and one child profile per subfolder. Child profiles can enable `include_parent_hooks` to run parent hooks before their own hooks. Switching a profile reloads `wallmuxd` when it is running.
+
+### Profile Theme Hook Example
+
+The old menu-driven wallpaper theme script can be reduced to a profile hook. Wallmux handles choosing the active profile/library, while the hook updates the rest of the desktop theme.
+
+An example hook lives at:
+
+```text
+examples/hooks/profile-theme-hook.sh
+```
+
+Install it somewhere writable, for example:
+
+```bash
+mkdir -p ~/.config/wallmux/hooks
+cp examples/hooks/profile-theme-hook.sh ~/.config/wallmux/hooks/
+chmod +x ~/.config/wallmux/hooks/profile-theme-hook.sh
+```
+
+Then add it to parent and/or child profiles. The placeholders are required; the script path alone is not enough because Wallmux has to pass the selected profile identity into the hook:
+
+```toml
+after_switch = [
+  "~/.config/wallmux/hooks/profile-theme-hook.sh '{category}' '{subcategory}' '{profile}'"
+]
+```
+
+In the GUI `After Switch` field, enter the same command on one line:
+
+```text
+$HOME/.config/hypr/scripts/profile-theme-hook.sh '{category}' '{subcategory}' '{profile}'
+```
+
+Newer Wallmux versions also export `WALLMUX_PROFILE_NAME`, `WALLMUX_PROFILE_CATEGORY`, `WALLMUX_PROFILE_SUBCATEGORY`, `WALLMUX_PROFILE_LABEL`, and `WALLMUX_PROFILE_WALLPAPER_DIRS` for profile hooks. The arguments are still recommended because they also work with older installs and make the hook command self-documenting.
+
+The script updates Hyprland border colors, hyprlock color, fastfetch logo, SDDM background when writable, and optionally calls `wallmuxctl random` after a profile switch. It supports the older `border.conf` style and the Hyprland 0.55 Lua `borders.lua` style:
+
+```lua
+active_border = {
+    colors = {
+        "rgba(ffffffff)",
+        "rgba(ddddddff)",
+        "rgba(ccccccff)",
+        "rgba(bbbbbbff)",
+    },
+    angle = 40,
+}
+```
+
+It derives the theme key from the profile:
+
+- Parent profile `Green` -> theme `Green`
+- Child profile `Green / Anime` -> theme `Green`
+- Child profile `Standard / Moondrop` -> theme `Moondrop`
+
+Useful environment overrides:
+
+```bash
+WALLPAPER_SOURCE_DIR="$HOME/Pictures/Wallpapers"
+WALLMUX_RANDOM_AFTER_PROFILE=1
+WALLMUX_SYNC_LEGACY_TARGET=0
+HYPR_CONFIG="$HOME/.config/hypr/settings/borders.lua"
+HYPRLOCK_CONFIG="$HOME/.config/hypr/hyprlock.conf"
+FASTFETCH_CONFIG="$HOME/.config/fastfetch/hypr.jsonc"
 ```
 
 Wallmux can inhibit auto switching and pause tracked video wallpapers while specific apps are active:
