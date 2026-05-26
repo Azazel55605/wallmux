@@ -141,6 +141,94 @@ Goal: easy install on Arch.
 - [x] Document Hyprland `exec-once`
 - [x] Prepare AUR packaging notes
 
+## V2 Roadmap
+
+Goal: turn the current daily-driver base into a more diagnosable, resilient, and workflow-aware wallpaper orchestrator.
+
+### V2.1: Health Checks and Diagnostics
+
+- [ ] Add `wallmuxctl doctor`
+- [ ] Add `wallmuxctl doctor video`
+- [ ] Check Hyprland session and `hyprctl` availability
+- [ ] Check configured backend commands and daemon requirements
+- [ ] Check optional tools such as `ffmpeg`, `notify-send`, `wal`, and `matugen`
+- [ ] Check config, state, library, thumbnail, and log path readability/writability
+- [ ] Check daemon socket reachability and report daemon version/state
+- [ ] Check video playback prerequisites such as `ffprobe`, available `ffmpeg` hardware accelerators, optional `vainfo`, and optional `nvidia-smi`
+- [ ] Detect GPU/driver hints from available system tools and expose best-effort decode recommendations
+- [ ] Add actionable status levels: ok, warning, error
+
+### V2.2: Better Runtime State
+
+- [ ] Expand `wallmuxctl state` with daemon uptime, last error, inhibition status, autoswitch timing, active backend per monitor, and tracked PIDs
+- [ ] Add a GUI state tab showing daemon status, monitor state, autoswitch status, inhibition reason, backend ownership, and recent errors
+- [ ] Show available video-related resources in the GUI state tab: GPU/driver hints, hardware decode tools, `ffmpeg`/`ffprobe` status, and recommended smooth-playback profile
+- [ ] Show dependency status in the GUI state tab for configured backends and helper tools, including installed, missing, optional, and unavailable states
+- [ ] Show current resource mode in the GUI state tab: AC/battery state, high CPU/GPU load inhibition, video pause/skip behavior, and active video cache usage
+- [ ] Add a lightweight daemon event/error log suitable for GUI display
+- [ ] Show whether daemon-command inhibition is active and which requests it affects
+
+### V2.3: Conservative Backend Fallbacks
+
+- [ ] Add image backend fallback chains for compatible backends such as `awww` -> `swww`
+- [ ] Keep `hyprpaper` opt-in rather than a default fallback for `awww`/`swww`
+- [ ] Add clear fallback logging so users know when the configured backend failed
+- [ ] Avoid cross-family fallbacks unless explicitly configured by the user
+
+### V2.4: Optional Daemon-Command Inhibition
+
+- [ ] Add an opt-in setting for inhibiting daemon-handled manual commands while inhibition is active
+- [ ] Keep explicit CLI direct mode/manual local execution uninhibited by default
+- [ ] Document that the setting affects daemon-routed commands such as GUI sets, daemon-backed `wallmuxctl set`, and daemon-backed `wallmuxctl random`
+- [ ] Return clear CLI/GUI messages when a command is inhibited and explain the active inhibition reason
+
+### V2.5: Profiles and Subcategories
+
+- [ ] Add named wallpaper profiles
+- [ ] Support nested profile categories such as color -> topic
+- [ ] Allow profile/category selection from CLI
+- [ ] Add a small GUI profile picker popup for quick switching
+- [ ] Add profile-level pre-switch and post-switch hooks
+- [ ] Allow profiles to define wallpaper dirs, backend rules, autoswitch mode, filters, and hook behavior
+
+### V2.6: Video Optimization
+
+- [ ] Detect video resolution, codec, duration, and file size
+- [ ] Warn about unusually heavy videos for the active monitor setup
+- [ ] Add `wallmuxctl video inspect FILE`
+- [ ] Add `wallmuxctl video optimize FILE --profile PROFILE`
+- [ ] Add `wallmuxctl video optimize-library --profile PROFILE` as an explicit bulk action with a clear disk-usage/time warning
+- [ ] Add per-backend video quality/performance presets
+- [ ] Improve pause/resume behavior for locked, fullscreen, and inhibited states
+- [ ] Consider optional thumbnail/frame metadata caching for faster video browsing
+- [ ] Add optional video optimization that creates cached playback-friendly derivatives through `ffmpeg` without modifying originals
+- [ ] Detect when a video is already suitable and skip unnecessary optimization
+- [ ] Add optimization profiles such as compatibility, balanced, quality, and manual `ffmpeg` arguments
+- [ ] Add settings for preferred optimized codec/container, max resolution, bitrate/quality, cache location, and whether optimized videos are preferred automatically when present
+- [ ] Track optimized video derivatives separately from thumbnails because they can be large
+- [ ] Store optimized-video metadata for source path, mtime, size, codec, resolution, profile, generated file, generated size, and last-used time
+- [ ] Add battery-aware video behavior for laptops: keep playing, pause, skip video wallpapers, or show first frame while on battery
+- [ ] Add high-resource-use behavior for CPU/GPU load: pause video playback, pause autoswitching, or both after a configurable sustained threshold
+- [ ] Make GPU load detection best-effort with vendor/tool-specific support and clear unavailable-state reporting
+
+### V2.7: Cache Maintenance
+
+- [ ] Add `wallmuxctl cache stats`
+- [ ] Add `wallmuxctl cache clean`
+- [ ] Add `wallmuxctl cache rebuild`
+- [ ] Add `wallmuxctl cache clean --videos` and `wallmuxctl cache clean --thumbnails`
+- [ ] Add optional periodic stale-thumbnail cleanup in `wallmuxd`
+- [ ] Add optimized video cache stats, cleanup, and rebuild controls
+- [ ] Add a GUI cache tab for thumbnails and optimized video derivatives
+- [ ] Show estimated and actual optimized-video cache size before and after optimization jobs
+- [ ] Add config for enabling/disabling cache maintenance, setting cleanup interval, and limiting optimized-video cache size
+- [ ] Add cleanup policies such as stale-only and least-recently-used for optimized video derivatives
+
+### Deferred / Needs More Design
+
+- [ ] Import compatibility for Waypaper, hyprpaper, swww, or ad hoc wallpaper scripts
+- [ ] Random-mode `previous` command without full history UI
+
 ## MVP Checklist
 
 - [x] Detect image, GIF, and video files
