@@ -25,6 +25,7 @@ from wallmux.core.config import load_config, user_config_file
 from wallmux.core.inhibition import (
     InhibitionStatus,
     evaluate_inhibition,
+    inhibit_manual_commands,
     inhibition_interval,
     pause_autoswitch,
     pause_videos,
@@ -179,6 +180,9 @@ class WallmuxDaemon:
 
     def _handle_set(self, request: dict[str, Any]) -> dict[str, Any]:
         self.reload_config()
+        inhibited_response = self._manual_command_inhibited_response("set")
+        if inhibited_response:
+            return inhibited_response
         file = Path(request["file"])
         backend_override = request.get("backend")
         backend_config_overrides = request.get("backend_config")
@@ -222,6 +226,9 @@ class WallmuxDaemon:
 
     def _handle_restore(self) -> dict[str, Any]:
         self.reload_config()
+        inhibited_response = self._manual_command_inhibited_response("restore")
+        if inhibited_response:
+            return inhibited_response
         results = restore_wallpapers(
             config=self.config,
             runner=self.runner,
@@ -238,6 +245,9 @@ class WallmuxDaemon:
 
     def _handle_autoswitch_now(self, request: dict[str, Any]) -> dict[str, Any]:
         self.reload_config()
+        inhibited_response = self._manual_command_inhibited_response("autoswitch-now")
+        if inhibited_response:
+            return inhibited_response
         mode = request.get("mode")
         results = self.autoswitch_once(
             mode=mode,
@@ -358,6 +368,7 @@ class WallmuxDaemon:
             "enabled": bool(self.config.get("inhibition", {}).get("enabled", True)),
             "pause_autoswitch": pause_autoswitch(self.config),
             "pause_videos": pause_videos(self.config),
+            "inhibit_manual_commands": inhibit_manual_commands(self.config),
             "check_interval_seconds": inhibition_interval(self.config),
             "paused_video_pids": sorted(self.paused_video_pids),
         }
@@ -394,9 +405,9 @@ class WallmuxDaemon:
             float(self.config.get("daemon", {}).get("startup_restore_retry_seconds", 5.0)),
         )
 
-    def _update_inhibition(self) -> None:
+    def _update_inhibition(self, *, force: bool = False) -> None:
         now = time.monotonic()
-        if now < self.next_inhibition_check_at:
+        if not force and now < self.next_inhibition_check_at:
             return
         self.next_inhibition_check_at = now + inhibition_interval(self.config)
         previous = self.inhibition_status
@@ -413,6 +424,28 @@ class WallmuxDaemon:
             self._pause_tracked_videos()
         elif previous.inhibited:
             self._resume_paused_videos()
+
+    def _manual_command_inhibited_response(self, command: str) -> dict[str, Any] | None:
+        if not inhibit_manual_commands(self.config):
+            return None
+
+        self._update_inhibition(force=True)
+        if not self.inhibition_status.inhibited:
+            return None
+
+        reason = self.inhibition_status.reason or "active inhibition rule"
+        message = (
+            f"{command} inhibited: {reason}. "
+            "Disable inhibition for manual daemon commands or use wallmuxctl --direct."
+        )
+        self._record_event("inhibition", message, status="warning")
+        return {
+            "ok": False,
+            "error": message,
+            "inhibited": True,
+            "inhibition_reason": reason,
+            "command": command,
+        }
 
     def _pause_tracked_videos(self) -> None:
         state = load_state(self.state_path)

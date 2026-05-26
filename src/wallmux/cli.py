@@ -244,6 +244,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "inhibition: "
             f"inhibited={inhibition.get('inhibited')} "
+            f"manual_commands={inhibition.get('inhibit_manual_commands')} "
             f"reason={inhibition.get('reason') or 'none'}"
         )
         if daemon.get("last_error"):
@@ -296,6 +297,8 @@ def _handle_autoswitch(args) -> int:
         for key in ("enabled", "interval_seconds", "mode", "target", "monitor"):
             print(f"{key}: {autoswitch.get(key)}")
         print(f"next_switch_seconds: {autoswitch.get('next_switch_seconds', 0):.1f}")
+        inhibition = response.get("daemon", {}).get("inhibition", {})
+        print(f"inhibit_manual_commands: {inhibition.get('inhibit_manual_commands')}")
         return 0
 
     if args.autoswitch_command == "now":
@@ -365,6 +368,8 @@ def _print_autoswitch_config(config: dict) -> None:
     autoswitch = config.get("autoswitch", {})
     for key in ("enabled", "interval_seconds", "mode", "target", "monitor"):
         print(f"{key}: {autoswitch.get(key)}")
+    inhibition = config.get("inhibition", {})
+    print(f"inhibit_manual_commands: {inhibition.get('inhibit_manual_commands', False)}")
 
 
 def _print_result_objects(results: list, verb: str) -> None:

@@ -83,6 +83,7 @@ enabled = true
 check_interval_seconds = 5.0
 pause_autoswitch = true
 pause_videos = true
+inhibit_manual_commands = false
 fullscreen = true
 process_names = ["gamescope", "gamemode", "wine64", "wineserver"]
 class_patterns = []

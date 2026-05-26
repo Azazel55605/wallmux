@@ -42,6 +42,10 @@ def pause_videos(config: dict[str, Any]) -> bool:
     return bool(inhibition_config(config).get("pause_videos", True))
 
 
+def inhibit_manual_commands(config: dict[str, Any]) -> bool:
+    return bool(inhibition_config(config).get("inhibit_manual_commands", False))
+
+
 def list_clients() -> list[HyprlandClient]:
     result = subprocess.run(
         ["hyprctl", "clients", "-j"],

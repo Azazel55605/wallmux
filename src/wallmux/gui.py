@@ -370,6 +370,11 @@ class WallmuxWindow(QMainWindow):
         self.inhibition_enabled_check = QCheckBox("Enabled")
         self.inhibition_pause_autoswitch_check = QCheckBox("Pause auto switching")
         self.inhibition_pause_videos_check = QCheckBox("Pause video wallpapers")
+        self.inhibition_manual_commands_check = QCheckBox("Also inhibit manual daemon commands")
+        self.inhibition_manual_commands_check.setToolTip(
+            "Blocks GUI sets and daemon-backed wallmuxctl set/random/restore while "
+            "inhibition is active. wallmuxctl --direct is still allowed."
+        )
         self.inhibition_fullscreen_check = QCheckBox("Any fullscreen window")
         self.inhibition_interval_spin = QDoubleSpinBox()
         self.inhibition_interval_spin.setRange(1.0, 300.0)
@@ -384,6 +389,7 @@ class WallmuxWindow(QMainWindow):
         inhibition_form.addRow("", self.inhibition_enabled_check)
         inhibition_form.addRow("", self.inhibition_pause_autoswitch_check)
         inhibition_form.addRow("", self.inhibition_pause_videos_check)
+        inhibition_form.addRow("", self.inhibition_manual_commands_check)
         inhibition_form.addRow("", self.inhibition_fullscreen_check)
         inhibition_form.addRow("Check Interval", self.inhibition_interval_spin)
         inhibition_form.addRow("Process Names", self.inhibition_process_names_edit)
@@ -901,6 +907,7 @@ class WallmuxWindow(QMainWindow):
             "check_interval_seconds": self.inhibition_interval_spin.value(),
             "pause_autoswitch": self.inhibition_pause_autoswitch_check.isChecked(),
             "pause_videos": self.inhibition_pause_videos_check.isChecked(),
+            "inhibit_manual_commands": self.inhibition_manual_commands_check.isChecked(),
             "fullscreen": self.inhibition_fullscreen_check.isChecked(),
             "process_names": self._pattern_lines(self.inhibition_process_names_edit),
             "class_patterns": self._pattern_lines(self.inhibition_class_patterns_edit),
@@ -1055,6 +1062,7 @@ class WallmuxWindow(QMainWindow):
                 f"reason: {inhibition.get('reason') or 'none'}",
                 f"pause autoswitch: {inhibition.get('pause_autoswitch')}",
                 f"pause videos: {inhibition.get('pause_videos')}",
+                f"inhibit manual daemon commands: {inhibition.get('inhibit_manual_commands')}",
                 f"paused video pids: {inhibition.get('paused_video_pids', [])}",
                 "",
                 "Monitors",
@@ -1110,6 +1118,9 @@ class WallmuxWindow(QMainWindow):
             bool(inhibition.get("pause_autoswitch", True))
         )
         self.inhibition_pause_videos_check.setChecked(bool(inhibition.get("pause_videos", True)))
+        self.inhibition_manual_commands_check.setChecked(
+            bool(inhibition.get("inhibit_manual_commands", False))
+        )
         self.inhibition_fullscreen_check.setChecked(bool(inhibition.get("fullscreen", True)))
         self.inhibition_process_names_edit.setPlainText(
             "\n".join(inhibition.get("process_names", []))

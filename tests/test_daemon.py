@@ -4,6 +4,7 @@ from pathlib import Path
 
 from wallmux.core.config import load_config
 from wallmux.core.daemon import WallmuxDaemon
+from wallmux.core.inhibition import InhibitionStatus
 from wallmux.core.ipc import DaemonUnavailable, send_request
 from wallmux.core.monitors import Monitor
 from wallmux.core.state import WallmuxState, WallpaperEntry, load_state, save_state
@@ -57,6 +58,100 @@ def test_daemon_handles_set_request(tmp_path: Path) -> None:
     assert response["ok"] is True
     assert response["results"][0]["backend"] == "awww"
     assert runner.runs[0][4] == "DP-1"
+
+
+def test_daemon_can_inhibit_manual_set_request(tmp_path: Path, monkeypatch) -> None:
+    runner = FakeRunner()
+    state_path = tmp_path / "state.json"
+    image = tmp_path / "wallpaper.png"
+    image.write_bytes(b"")
+    config = sample_config(tmp_path)
+    config["inhibition"]["inhibit_manual_commands"] = True
+    monkeypatch.setattr(
+        "wallmux.core.daemon.load_config",
+        lambda *_args: config,
+    )
+    monkeypatch.setattr(
+        "wallmux.core.daemon.evaluate_inhibition",
+        lambda config: InhibitionStatus(True, "process: gamescope"),
+    )
+    daemon = WallmuxDaemon(
+        config=config,
+        config_path=sample_config_path(tmp_path),
+        runner=runner,
+        state_path=state_path,
+        restore_on_startup=False,
+    )
+
+    response = daemon.handle_request(
+        {
+            "command": "set",
+            "file": str(image),
+            "monitor": "DP-1",
+        }
+    )
+
+    assert response["ok"] is False
+    assert response["inhibited"] is True
+    assert response["inhibition_reason"] == "process: gamescope"
+    assert "wallmuxctl --direct" in response["error"]
+    assert runner.runs == []
+
+
+def test_daemon_can_inhibit_manual_autoswitch_now_request(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = sample_config(tmp_path)
+    config["inhibition"]["inhibit_manual_commands"] = True
+    monkeypatch.setattr("wallmux.core.daemon.load_config", lambda *_args: config)
+    monkeypatch.setattr(
+        "wallmux.core.daemon.evaluate_inhibition",
+        lambda config: InhibitionStatus(True, "fullscreen: game"),
+    )
+    daemon = WallmuxDaemon(
+        config=config,
+        config_path=sample_config_path(tmp_path),
+        state_path=tmp_path / "state.json",
+        restore_on_startup=False,
+    )
+
+    response = daemon.handle_request({"command": "autoswitch-now", "mode": "random"})
+
+    assert response["ok"] is False
+    assert response["command"] == "autoswitch-now"
+    assert response["inhibition_reason"] == "fullscreen: game"
+
+
+def test_daemon_manual_set_inhibition_is_opt_in(tmp_path: Path, monkeypatch) -> None:
+    runner = FakeRunner()
+    state_path = tmp_path / "state.json"
+    image = tmp_path / "wallpaper.png"
+    image.write_bytes(b"")
+    config = sample_config(tmp_path)
+    config["inhibition"]["inhibit_manual_commands"] = False
+    monkeypatch.setattr(
+        "wallmux.core.daemon.evaluate_inhibition",
+        lambda config: InhibitionStatus(True, "process: gamescope"),
+    )
+    daemon = WallmuxDaemon(
+        config=config,
+        config_path=sample_config_path(tmp_path),
+        runner=runner,
+        state_path=state_path,
+        restore_on_startup=False,
+    )
+
+    response = daemon.handle_request(
+        {
+            "command": "set",
+            "file": str(image),
+            "monitor": "DP-1",
+        }
+    )
+
+    assert response["ok"] is True
+    assert runner.runs
 
 
 def test_daemon_reloads_config_for_set_request(tmp_path: Path, monkeypatch) -> None:

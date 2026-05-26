@@ -53,6 +53,8 @@ wallmuxctl --direct set ~/Wallpapers/foo.png --monitor DP-1
 
 Auto switching is daemon-owned. If `wallmuxd` is not running, `wallmuxctl autoswitch status` reports that clearly and daemon-only actions fail with a daemon-required message. Manual `wallmuxctl random` can still fall back to direct execution.
 
+Inhibition can optionally block daemon-routed manual wallpaper changes while a game/fullscreen/render rule is active. This affects GUI sets, daemon-backed `wallmuxctl set`, daemon-backed `wallmuxctl random`, `wallmuxctl autoswitch now`, and daemon-backed `restore`. It is disabled by default, and `wallmuxctl --direct ...` remains uninhibited.
+
 ## GUI
 
 ```bash
@@ -187,6 +189,7 @@ enabled = true
 check_interval_seconds = 5.0
 pause_autoswitch = true
 pause_videos = true
+inhibit_manual_commands = false
 fullscreen = true
 process_names = ["gamescope", "gamemode", "wine64", "wineserver"]
 class_patterns = []

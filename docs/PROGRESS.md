@@ -168,7 +168,7 @@ Goal: turn the current daily-driver base into a more diagnosable, resilient, and
 - [ ] Show dependency status in the GUI state tab for configured backends and helper tools, including installed, missing, optional, and unavailable states
 - [ ] Show current resource mode in the GUI state tab: AC/battery state, high CPU/GPU load inhibition, video pause/skip behavior, and active video cache usage
 - [x] Add a lightweight daemon event/error log suitable for GUI display
-- [ ] Show whether daemon-command inhibition is active and which requests it affects
+- [x] Show whether daemon-command inhibition is active and which requests it affects
 
 ### V2.3: Conservative Backend Fallbacks
 
@@ -180,10 +180,10 @@ Goal: turn the current daily-driver base into a more diagnosable, resilient, and
 
 ### V2.4: Optional Daemon-Command Inhibition
 
-- [ ] Add an opt-in setting for inhibiting daemon-handled manual commands while inhibition is active
-- [ ] Keep explicit CLI direct mode/manual local execution uninhibited by default
-- [ ] Document that the setting affects daemon-routed commands such as GUI sets, daemon-backed `wallmuxctl set`, and daemon-backed `wallmuxctl random`
-- [ ] Return clear CLI/GUI messages when a command is inhibited and explain the active inhibition reason
+- [x] Add an opt-in setting for inhibiting daemon-handled manual commands while inhibition is active
+- [x] Keep explicit CLI direct mode/manual local execution uninhibited by default
+- [x] Document that the setting affects daemon-routed commands such as GUI sets, daemon-backed `wallmuxctl set`, and daemon-backed `wallmuxctl random`
+- [x] Return clear CLI/GUI messages when a command is inhibited and explain the active inhibition reason
 
 ### V2.5: Profiles and Subcategories
 
@@ -288,3 +288,4 @@ Record notable checks here as the project moves.
 - 2026-05-26: Started V2.1 with `wallmuxctl doctor` and `wallmuxctl doctor video` health checks for environment, backends, paths, daemon reachability, and video tooling.
 - 2026-05-26: Started V2.2 with richer daemon state, monitor status, recent daemon events, improved `wallmuxctl state`, and a GUI State tab with daemon/runtime and video doctor information.
 - 2026-05-26: Finished V2.3 conservative backend fallbacks with default `awww` -> `swww`, opt-in fallback chains, fallback logging, grouped all-monitor fallback handling, and GUI fallback settings.
+- 2026-05-26: Finished V2.4 optional daemon-command inhibition for GUI sets, daemon-backed set/random/restore/autoswitch-now commands, with status visibility and direct CLI execution kept uninhibited.
