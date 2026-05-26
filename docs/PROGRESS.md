@@ -147,16 +147,17 @@ Goal: turn the current daily-driver base into a more diagnosable, resilient, and
 
 ### V2.1: Health Checks and Diagnostics
 
-- [ ] Add `wallmuxctl doctor`
-- [ ] Add `wallmuxctl doctor video`
-- [ ] Check Hyprland session and `hyprctl` availability
-- [ ] Check configured backend commands and daemon requirements
-- [ ] Check optional tools such as `ffmpeg`, `notify-send`, `wal`, and `matugen`
-- [ ] Check config, state, library, thumbnail, and log path readability/writability
-- [ ] Check daemon socket reachability and report daemon version/state
-- [ ] Check video playback prerequisites such as `ffprobe`, available `ffmpeg` hardware accelerators, optional `vainfo`, and optional `nvidia-smi`
-- [ ] Detect GPU/driver hints from available system tools and expose best-effort decode recommendations
-- [ ] Add actionable status levels: ok, warning, error
+- [x] Add `wallmuxctl doctor`
+- [x] Add `wallmuxctl doctor video`
+- [x] Check Hyprland session and `hyprctl` availability
+- [x] Check configured backend commands and daemon requirements
+- [x] Check optional tools such as `ffmpeg`, `notify-send`, `wal`, and `matugen`
+- [x] Check config, state, library, thumbnail, and log path readability/writability
+- [x] Check daemon socket reachability and report daemon version/state
+- [x] Check video playback prerequisites such as `ffprobe`, available `ffmpeg` hardware accelerators, optional `vainfo`, and optional `nvidia-smi`
+- [x] Detect GPU/driver hints from available system tools
+- [ ] Expose best-effort video decode recommendations
+- [x] Add actionable status levels: ok, warning, error
 
 ### V2.2: Better Runtime State
 
@@ -282,3 +283,4 @@ Record notable checks here as the project moves.
 - 2026-05-24: Finished Phase 6 packaging assets with Arch `PKGBUILD`, systemd user service, desktop file, app icon, Hyprland startup docs, AUR notes, and local desktop/service Makefile helpers.
 - 2026-05-24: Added `hyprpaper` as an optional static image backend and refreshed the packaged app icon into a minimal line-style mark.
 - 2026-05-25: Added notification icon support using the `wallmux-gui` app icon by default, including resolved icon paths and desktop-entry hints for notification daemons.
+- 2026-05-26: Started V2.1 with `wallmuxctl doctor` and `wallmuxctl doctor video` health checks for environment, backends, paths, daemon reachability, and video tooling.

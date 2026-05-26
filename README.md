@@ -35,6 +35,8 @@ wallmuxctl random --all
 wallmuxctl autoswitch status
 wallmuxctl autoswitch set --enable --interval 300 --mode random --target all
 wallmuxctl autoswitch now
+wallmuxctl doctor
+wallmuxctl doctor video
 wallmuxctl reload
 wallmuxctl stop-video --monitor DP-1
 wallmuxd

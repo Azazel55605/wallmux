@@ -8,6 +8,7 @@ from pathlib import Path
 from wallmux.backends.routing import route_wallpaper
 from wallmux.core.autoswitch import choose_wallpaper, load_wallpaper_library
 from wallmux.core.config import load_config, user_config_file, write_config
+from wallmux.core.doctor import doctor_report_json, format_doctor_report, run_doctor
 from wallmux.core.ipc import DaemonUnavailable, send_request
 from wallmux.core.mime import detect_wallpaper_type
 from wallmux.core.monitors import list_monitors
@@ -83,6 +84,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     state = subparsers.add_parser("state", help="Print daemon state.")
     state.set_defaults(command="state")
+
+    doctor = subparsers.add_parser("doctor", help="Check Wallmux environment health.")
+    doctor.add_argument(
+        "scope",
+        nargs="?",
+        choices=["all", "video"],
+        default="all",
+        help="Limit checks to a specific area.",
+    )
+    doctor.add_argument("--json", action="store_true", help="Print checks as JSON.")
 
     return parser
 
@@ -226,6 +237,14 @@ def main(argv: list[str] | None = None) -> int:
             pid = f" pid={entry['pid']}" if entry.get("pid") else ""
             print(f"{monitor}: {entry['file']} via {entry['backend']}{pid}")
         return 0
+
+    if args.command == "doctor":
+        report = run_doctor(video_only=args.scope == "video")
+        if args.json:
+            print(doctor_report_json(report))
+        else:
+            print(format_doctor_report(report))
+        return 1 if report.has_errors else 0
 
     return 1
 
