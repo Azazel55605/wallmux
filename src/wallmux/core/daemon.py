@@ -7,6 +7,8 @@ import socket
 import sys
 import time
 from dataclasses import asdict
+from datetime import datetime
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +21,7 @@ from wallmux.core.autoswitch import (
     choose_wallpaper,
     load_wallpaper_library,
 )
-from wallmux.core.config import load_config
+from wallmux.core.config import load_config, user_config_file
 from wallmux.core.inhibition import (
     InhibitionStatus,
     evaluate_inhibition,
@@ -31,7 +33,7 @@ from wallmux.core.ipc import default_socket_path
 from wallmux.core.monitors import get_focused_monitor, list_monitors
 from wallmux.core.notifications import notify_switch_failed, notify_wallpaper_switched
 from wallmux.core.process import pause_pid, pid_is_alive, resume_pid, terminate_pid
-from wallmux.core.state import load_state, save_state
+from wallmux.core.state import WallmuxState, load_state, save_state, state_file
 from wallmux.core.wallpaper import (
     CommandRunner,
     SetResult,
@@ -41,6 +43,8 @@ from wallmux.core.wallpaper import (
     set_wallpaper_for_all,
     set_wallpaper_for_focused,
 )
+
+STATE_SCHEMA_VERSION = 2
 
 
 class WallmuxDaemon:
@@ -70,6 +74,9 @@ class WallmuxDaemon:
         self.next_inhibition_check_at = 0.0
         self.inhibition_status = InhibitionStatus(False)
         self.paused_video_pids: set[int] = set()
+        self.started_at = time.time()
+        self.last_error: dict[str, Any] | None = None
+        self.events: list[dict[str, Any]] = []
 
     def start(self) -> None:
         self.cleanup_stale_pids()
@@ -131,6 +138,7 @@ class WallmuxDaemon:
         except KeyError as error:
             return {"ok": False, "error": f"missing required field: {error.args[0]}"}
         except (ValueError, WallmuxError) as error:
+            self._record_error("request failed", error)
             notify_switch_failed(self.config, error)
             return {"ok": False, "error": str(error)}
 
@@ -162,7 +170,9 @@ class WallmuxDaemon:
         try:
             results = self.autoswitch_once()
             notify_wallpaper_switched(self.config, results)
+            self._record_event("autoswitch", f"switched {len(results)} monitor(s)")
         except (ValueError, WallmuxError) as error:
+            self._record_error("autoswitch failed", error)
             notify_switch_failed(self.config, error)
         finally:
             self.next_autoswitch_at = now + autoswitch_interval(self.config)
@@ -207,6 +217,7 @@ class WallmuxDaemon:
             ]
 
         notify_wallpaper_switched(self.config, results)
+        self._record_event("set", f"set wallpaper on {len(results)} monitor(s)")
         return {"ok": True, "results": [_serialize_result(result) for result in results]}
 
     def _handle_restore(self) -> dict[str, Any]:
@@ -217,10 +228,12 @@ class WallmuxDaemon:
             state_path=self.state_path,
         )
         notify_wallpaper_switched(self.config, results)
+        self._record_event("restore", f"restored {len(results)} wallpaper(s)")
         return {"ok": True, "results": [_serialize_result(result) for result in results]}
 
     def _handle_reload(self) -> dict[str, Any]:
         self.reload_config()
+        self._record_event("reload", "config reloaded")
         return {"ok": True}
 
     def _handle_autoswitch_now(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -233,6 +246,7 @@ class WallmuxDaemon:
         )
         self.next_autoswitch_at = time.monotonic() + autoswitch_interval(self.config)
         notify_wallpaper_switched(self.config, results)
+        self._record_event("autoswitch", f"switched {len(results)} monitor(s)")
         return {"ok": True, "results": [_serialize_result(result) for result in results]}
 
     def _handle_stop_video(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -240,11 +254,13 @@ class WallmuxDaemon:
         state = load_state(self.state_path)
         entry = state.monitors.get(monitor)
         if not entry or not entry.pid:
+            self._record_event("stop-video", f"no tracked video process on {monitor}")
             return {"ok": True, "stopped": False, "monitor": monitor}
 
         stopped = terminate_pid(entry.pid)
         entry.pid = None
         save_state(state, self.state_path)
+        self._record_event("stop-video", f"stopped video process on {monitor}")
         return {"ok": True, "stopped": stopped, "monitor": monitor}
 
     def _handle_state(self) -> dict[str, Any]:
@@ -252,8 +268,19 @@ class WallmuxDaemon:
         return {
             "ok": True,
             "state": asdict(state),
+            "monitors": self._monitor_status(state),
             "daemon": {
                 "running": True,
+                "state_schema_version": STATE_SCHEMA_VERSION,
+                "version": _package_version(),
+                "started_at": self.started_at,
+                "uptime_seconds": max(0.0, time.time() - self.started_at),
+                "socket_path": str(self.socket_path),
+                "config_path": str(self.config_path or user_config_file()),
+                "state_path": str(self.state_path or state_file()),
+                "startup_restore_pending": self.startup_restore_pending,
+                "last_error": self.last_error,
+                "events": self.events[-20:],
                 "autoswitch": self._autoswitch_status(),
                 "inhibition": self._inhibition_status(),
             },
@@ -328,6 +355,10 @@ class WallmuxDaemon:
         return {
             "inhibited": self.inhibition_status.inhibited,
             "reason": self.inhibition_status.reason,
+            "enabled": bool(self.config.get("inhibition", {}).get("enabled", True)),
+            "pause_autoswitch": pause_autoswitch(self.config),
+            "pause_videos": pause_videos(self.config),
+            "check_interval_seconds": inhibition_interval(self.config),
             "paused_video_pids": sorted(self.paused_video_pids),
         }
 
@@ -341,12 +372,14 @@ class WallmuxDaemon:
         except (ValueError, WallmuxError) as error:
             self.startup_restore_pending = True
             self.next_startup_restore_at = time.monotonic() + self._restore_retry_seconds()
+            self._record_error("startup restore failed", error)
             print(
                 f"wallmuxd: startup restore failed; will retry: {error}",
                 file=sys.stderr,
             )
         else:
             self.startup_restore_pending = False
+            self._record_event("startup-restore", "startup restore completed")
 
     def _retry_startup_restore(self) -> None:
         if not self.startup_restore_pending:
@@ -368,6 +401,14 @@ class WallmuxDaemon:
         self.next_inhibition_check_at = now + inhibition_interval(self.config)
         previous = self.inhibition_status
         self.inhibition_status = evaluate_inhibition(self.config)
+        if previous != self.inhibition_status:
+            if self.inhibition_status.inhibited:
+                self._record_event(
+                    "inhibition",
+                    f"inhibited: {self.inhibition_status.reason}",
+                )
+            else:
+                self._record_event("inhibition", "inhibition cleared")
         if self.inhibition_status.inhibited and pause_videos(self.config):
             self._pause_tracked_videos()
         elif previous.inhibited:
@@ -384,6 +425,57 @@ class WallmuxDaemon:
             resume_pid(pid)
             self.paused_video_pids.discard(pid)
 
+    def _monitor_status(self, state: WallmuxState) -> dict[str, Any]:
+        live_monitors = {monitor.name: monitor for monitor in list_monitors()}
+        statuses: dict[str, Any] = {}
+        for monitor_name, entry in state.monitors.items():
+            live_monitor = live_monitors.get(monitor_name)
+            statuses[monitor_name] = {
+                "file": entry.file,
+                "backend": entry.backend,
+                "wallpaper_type": entry.wallpaper_type,
+                "pid": entry.pid,
+                "pid_alive": bool(entry.pid and pid_is_alive(entry.pid)),
+                "connected": live_monitor is not None,
+                "focused": bool(live_monitor.focused) if live_monitor else False,
+                "description": live_monitor.description if live_monitor else None,
+            }
+
+        for monitor_name, monitor in live_monitors.items():
+            statuses.setdefault(
+                monitor_name,
+                {
+                    "file": None,
+                    "backend": None,
+                    "wallpaper_type": None,
+                    "pid": None,
+                    "pid_alive": False,
+                    "connected": True,
+                    "focused": monitor.focused,
+                    "description": monitor.description,
+                },
+            )
+        return statuses
+
+    def _record_event(self, kind: str, message: str, *, status: str = "info") -> None:
+        self.events.append(
+            {
+                "time": datetime.fromtimestamp(time.time()).isoformat(timespec="seconds"),
+                "kind": kind,
+                "status": status,
+                "message": message,
+            }
+        )
+        del self.events[:-50]
+
+    def _record_error(self, message: str, error: Exception) -> None:
+        self.last_error = {
+            "time": datetime.fromtimestamp(time.time()).isoformat(timespec="seconds"),
+            "message": message,
+            "error": str(error),
+        }
+        self._record_event("error", f"{message}: {error}", status="error")
+
 
 def _serialize_result(result: SetResult) -> dict[str, Any]:
     return {
@@ -395,3 +487,10 @@ def _serialize_result(result: SetResult) -> dict[str, Any]:
         "pid": result.pid,
         "transition": result.transition.value,
     }
+
+
+def _package_version() -> str:
+    try:
+        return version("wallmux")
+    except PackageNotFoundError:
+        return "editable"

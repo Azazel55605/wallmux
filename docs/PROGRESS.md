@@ -161,12 +161,13 @@ Goal: turn the current daily-driver base into a more diagnosable, resilient, and
 
 ### V2.2: Better Runtime State
 
-- [ ] Expand `wallmuxctl state` with daemon uptime, last error, inhibition status, autoswitch timing, active backend per monitor, and tracked PIDs
-- [ ] Add a GUI state tab showing daemon status, monitor state, autoswitch status, inhibition reason, backend ownership, and recent errors
-- [ ] Show available video-related resources in the GUI state tab: GPU/driver hints, hardware decode tools, `ffmpeg`/`ffprobe` status, and recommended smooth-playback profile
+- [x] Expand `wallmuxctl state` with daemon uptime, last error, inhibition status, autoswitch timing, active backend per monitor, and tracked PIDs
+- [x] Add a GUI state tab showing daemon status, monitor state, autoswitch status, inhibition reason, backend ownership, and recent errors
+- [x] Show available video-related resources in the GUI state tab: GPU/driver hints, hardware decode tools, and `ffmpeg`/`ffprobe` status
+- [ ] Show recommended smooth-playback profile in the GUI state tab
 - [ ] Show dependency status in the GUI state tab for configured backends and helper tools, including installed, missing, optional, and unavailable states
 - [ ] Show current resource mode in the GUI state tab: AC/battery state, high CPU/GPU load inhibition, video pause/skip behavior, and active video cache usage
-- [ ] Add a lightweight daemon event/error log suitable for GUI display
+- [x] Add a lightweight daemon event/error log suitable for GUI display
 - [ ] Show whether daemon-command inhibition is active and which requests it affects
 
 ### V2.3: Conservative Backend Fallbacks
@@ -284,3 +285,4 @@ Record notable checks here as the project moves.
 - 2026-05-24: Added `hyprpaper` as an optional static image backend and refreshed the packaged app icon into a minimal line-style mark.
 - 2026-05-25: Added notification icon support using the `wallmux-gui` app icon by default, including resolved icon paths and desktop-entry hints for notification daemons.
 - 2026-05-26: Started V2.1 with `wallmuxctl doctor` and `wallmuxctl doctor video` health checks for environment, backends, paths, daemon reachability, and video tooling.
+- 2026-05-26: Started V2.2 with richer daemon state, monitor status, recent daemon events, improved `wallmuxctl state`, and a GUI State tab with daemon/runtime and video doctor information.

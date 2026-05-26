@@ -229,13 +229,43 @@ def main(argv: list[str] | None = None) -> int:
             print(f"wallmuxctl: {response.get('error', 'unknown daemon error')}")
             return 1
         print("wallmuxd: running")
-        monitors = response.get("state", {}).get("monitors", {})
+        daemon = response.get("daemon", {})
+        print(f"uptime_seconds: {daemon.get('uptime_seconds', 0):.1f}")
+        print(f"startup_restore_pending: {daemon.get('startup_restore_pending', False)}")
+        autoswitch = daemon.get("autoswitch", {})
+        print(
+            "autoswitch: "
+            f"enabled={autoswitch.get('enabled')} "
+            f"mode={autoswitch.get('mode')} "
+            f"target={autoswitch.get('target')} "
+            f"next={autoswitch.get('next_switch_seconds', 0):.1f}s"
+        )
+        inhibition = daemon.get("inhibition", {})
+        print(
+            "inhibition: "
+            f"inhibited={inhibition.get('inhibited')} "
+            f"reason={inhibition.get('reason') or 'none'}"
+        )
+        if daemon.get("last_error"):
+            last_error = daemon["last_error"]
+            print(f"last_error: {last_error.get('message')}: {last_error.get('error')}")
+        monitors = response.get("monitors") or response.get("state", {}).get("monitors", {})
         if not monitors:
             print("no saved wallpapers")
             return 0
+        print("monitors:")
         for monitor, entry in monitors.items():
             pid = f" pid={entry['pid']}" if entry.get("pid") else ""
-            print(f"{monitor}: {entry['file']} via {entry['backend']}{pid}")
+            connected = "connected" if entry.get("connected", True) else "missing"
+            focused = " focused" if entry.get("focused") else ""
+            file = entry.get("file") or "no wallpaper"
+            backend = entry.get("backend") or "none"
+            print(f"  {monitor}: {file} via {backend}{pid} [{connected}{focused}]")
+        events = daemon.get("events", [])
+        if events:
+            print("recent_events:")
+            for event in events[-5:]:
+                print(f"  {event.get('time')} {event.get('kind')}: {event.get('message')}")
         return 0
 
     if args.command == "doctor":

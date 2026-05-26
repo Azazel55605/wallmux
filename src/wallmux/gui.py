@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import signal
+import subprocess
 import sys
 import traceback
 from pathlib import Path
 
 from wallmux.backends.routing import compatible_backends
 from wallmux.core.config import load_config, user_config_file, write_config
+from wallmux.core.doctor import format_doctor_report, run_doctor
 from wallmux.core.hooks import hook_log_file
 from wallmux.core.ipc import DaemonUnavailable, send_request
 from wallmux.core.library import WallpaperItem, filter_wallpapers, scan_wallpaper_dir
@@ -148,6 +153,7 @@ class WallmuxWindow(QMainWindow):
         self.setStatusBar(self.status)
 
         self._build_browser_tab()
+        self._build_state_tab()
         self._build_settings_tab()
         self._build_shortcuts()
         self._load_monitors()
@@ -161,6 +167,7 @@ class WallmuxWindow(QMainWindow):
         )
         self.preview.setText("Choose a folder")
         QTimer.singleShot(0, self._load_initial_folder)
+        QTimer.singleShot(0, self.refresh_state_tab)
 
     def _build_browser_tab(self) -> None:
         tab = QWidget()
@@ -242,6 +249,33 @@ class WallmuxWindow(QMainWindow):
         outer.addWidget(self.splitter, 1)
 
         self.tabs.addTab(tab, "Browser")
+
+    def _build_state_tab(self) -> None:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        self.state_view = QTextEdit()
+        self.state_view.setReadOnly(True)
+        self.state_view.setMinimumHeight(360)
+        layout.addWidget(self.state_view, 1)
+
+        buttons = QHBoxLayout()
+        refresh_button = QPushButton("Refresh State")
+        refresh_button.clicked.connect(self.refresh_state_tab)
+        start_button = QPushButton("Start Daemon")
+        start_button.clicked.connect(lambda: self.control_daemon("start"))
+        restart_button = QPushButton("Restart Daemon")
+        restart_button.clicked.connect(lambda: self.control_daemon("restart"))
+        stop_button = QPushButton("Stop Daemon")
+        stop_button.clicked.connect(lambda: self.control_daemon("stop"))
+        buttons.addWidget(refresh_button)
+        buttons.addWidget(start_button)
+        buttons.addWidget(restart_button)
+        buttons.addWidget(stop_button)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+
+        self.tabs.addTab(tab, "State")
 
     def _build_shortcuts(self) -> None:
         zen_action = QAction("Toggle Zen Mode", self)
@@ -923,6 +957,114 @@ class WallmuxWindow(QMainWindow):
         self.autoswitch_now_button.setEnabled(running)
         self.autoswitch_enabled_check.setEnabled(running)
 
+    def refresh_state_tab(self) -> None:
+        lines = []
+        lines.extend(_daemon_process_status_lines())
+        lines.append("")
+        try:
+            response = send_request({"command": "state"}, timeout_seconds=0.5)
+        except DaemonUnavailable as error:
+            lines.append(f"wallmuxd: not running ({error})")
+            self.refresh_daemon_status(False)
+        else:
+            if not response.get("ok"):
+                lines.append(f"wallmuxd: error ({response.get('error', 'unknown error')})")
+            else:
+                self.refresh_daemon_status(True)
+                lines.extend(self._format_state_response(response))
+
+        lines.append("")
+        lines.append("Dependencies")
+        lines.append(format_doctor_report(run_doctor(video_only=True)))
+        self.state_view.setPlainText("\n".join(lines))
+
+    def control_daemon(self, action: str) -> None:
+        ok, message = _control_wallmuxd(action)
+        if not ok:
+            QMessageBox.critical(self, "Wallmux", f"Could not {action} wallmuxd:\n{message}")
+            return
+
+        self.status.showMessage(message, 5000)
+        QTimer.singleShot(500, self.refresh_state_tab)
+
+    def _format_state_response(self, response: dict) -> list[str]:
+        daemon = response.get("daemon", {})
+        autoswitch = daemon.get("autoswitch", {})
+        inhibition = daemon.get("inhibition", {})
+        schema_version = daemon.get("state_schema_version")
+        lines = [
+            "Daemon",
+            f"running: {daemon.get('running')}",
+            f"version: {_state_value(daemon, 'version')}",
+            f"state schema: {_state_value(daemon, 'state_schema_version')}",
+            f"uptime: {_format_seconds(daemon.get('uptime_seconds'))}",
+            f"socket: {_state_value(daemon, 'socket_path')}",
+            f"config: {_state_value(daemon, 'config_path')}",
+            f"state: {_state_value(daemon, 'state_path')}",
+            f"startup restore pending: {daemon.get('startup_restore_pending', False)}",
+        ]
+        if schema_version is None:
+            lines.extend(
+                [
+                    "warning: wallmuxd is using an older state payload; "
+                    "restart wallmuxd after upgrading Wallmux.",
+                    "",
+                ]
+            )
+        else:
+            lines.append("")
+        lines.extend(
+            [
+                "Autoswitch",
+                f"enabled: {autoswitch.get('enabled')}",
+                f"mode: {autoswitch.get('mode')}",
+                f"target: {autoswitch.get('target')}",
+                f"monitor: {autoswitch.get('monitor')}",
+                f"next switch: {_format_seconds(autoswitch.get('next_switch_seconds'))}",
+                "",
+                "Inhibition",
+                f"enabled: {inhibition.get('enabled')}",
+                f"inhibited: {inhibition.get('inhibited')}",
+                f"reason: {inhibition.get('reason') or 'none'}",
+                f"pause autoswitch: {inhibition.get('pause_autoswitch')}",
+                f"pause videos: {inhibition.get('pause_videos')}",
+                f"paused video pids: {inhibition.get('paused_video_pids', [])}",
+                "",
+                "Monitors",
+            ]
+        )
+        monitors = response.get("monitors", {})
+        if not monitors:
+            lines.append("no monitor state")
+        for monitor, entry in monitors.items():
+            pid = f" pid={entry.get('pid')}" if entry.get("pid") else ""
+            connected = "connected" if entry.get("connected") else "missing"
+            focused = " focused" if entry.get("focused") else ""
+            lines.append(
+                f"{monitor}: {entry.get('file') or 'no wallpaper'} "
+                f"via {entry.get('backend') or 'none'}{pid} [{connected}{focused}]"
+            )
+
+        if daemon.get("last_error"):
+            error = daemon["last_error"]
+            lines.extend(
+                [
+                    "",
+                    "Last Error",
+                    f"{error.get('time')} {error.get('message')}: {error.get('error')}",
+                ]
+            )
+
+        events = daemon.get("events", [])
+        if events:
+            lines.extend(["", "Recent Events"])
+            for event in events[-10:]:
+                lines.append(
+                    f"{event.get('time')} {event.get('kind')} "
+                    f"[{event.get('status')}]: {event.get('message')}"
+                )
+        return lines
+
     def refresh_autoswitch_settings(self) -> None:
         autoswitch = self.config.get("autoswitch", {})
         self.autoswitch_enabled_check.setChecked(bool(autoswitch.get("enabled", False)))
@@ -1255,6 +1397,169 @@ def _app_icon(app: QApplication) -> QIcon:
     if not icon.isNull():
         return icon
     return app.style().standardIcon(QStyle.SP_DesktopIcon)
+
+
+def _control_wallmuxd(action: str) -> tuple[bool, str]:
+    if action == "start":
+        if _daemon_socket_running():
+            return True, "wallmuxd is already running"
+        service = _systemd_service_state()
+        if service["unit_found"]:
+            ok, message = _systemctl_user("start")
+            if ok:
+                return True, "wallmuxd service start requested"
+            if service["active"]:
+                return False, message
+        return _start_standalone_wallmuxd()
+
+    if action == "stop":
+        service = _systemd_service_state()
+        messages = []
+        if service["active"]:
+            ok, message = _systemctl_user("stop")
+            if not ok:
+                return False, message
+            messages.append("wallmuxd service stop requested")
+        pids = _wallmuxd_pids()
+        if pids:
+            _terminate_wallmuxd_pids(pids)
+            messages.append(f"stopped standalone wallmuxd process(es): {', '.join(map(str, pids))}")
+        if messages:
+            return True, "; ".join(messages)
+        return True, "wallmuxd is not running"
+
+    if action == "restart":
+        service = _systemd_service_state()
+        if service["active"]:
+            ok, message = _systemctl_user("restart")
+            if ok:
+                return True, "wallmuxd service restart requested"
+            return False, message
+        pids = _wallmuxd_pids()
+        if pids:
+            _terminate_wallmuxd_pids(pids)
+        if service["unit_found"]:
+            ok, message = _systemctl_user("start")
+            if ok:
+                return True, "wallmuxd service start requested"
+        return _start_standalone_wallmuxd()
+
+    return False, f"unknown daemon action: {action}"
+
+
+def _daemon_process_status_lines() -> list[str]:
+    service = _systemd_service_state()
+    pids = _wallmuxd_pids()
+    service_state = "unavailable"
+    if service["unit_found"]:
+        service_state = "active" if service["active"] else "inactive"
+    process_state = ", ".join(str(pid) for pid in pids) if pids else "not running"
+    return [
+        "Daemon Control",
+        f"systemd service: {service_state}",
+        f"standalone process pids: {process_state}",
+    ]
+
+
+def _systemd_service_state() -> dict[str, bool]:
+    result = subprocess.run(
+        ["systemctl", "--user", "show", "wallmux.service", "--property=LoadState,ActiveState"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return {"unit_found": False, "active": False}
+    values = {}
+    for line in result.stdout.splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            values[key] = value
+    load_state = values.get("LoadState", "")
+    active_state = values.get("ActiveState", "")
+    return {
+        "unit_found": load_state not in {"", "not-found"},
+        "active": active_state == "active",
+    }
+
+
+def _systemctl_user(action: str) -> tuple[bool, str]:
+    result = subprocess.run(
+        ["systemctl", "--user", action, "wallmux.service"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return True, f"systemctl --user {action} wallmux.service succeeded"
+    return False, result.stderr.strip() or result.stdout.strip() or "systemctl failed"
+
+
+def _start_standalone_wallmuxd() -> tuple[bool, str]:
+    executable = shutil.which("wallmuxd")
+    if executable is None:
+        return False, "wallmux.service is not installed and wallmuxd was not found in PATH"
+    try:
+        subprocess.Popen(
+            [executable],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as error:
+        return False, str(error)
+    return True, "standalone wallmuxd started"
+
+
+def _wallmuxd_pids() -> list[int]:
+    result = subprocess.run(
+        ["pgrep", "-x", "wallmuxd"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return []
+    pids = []
+    for line in result.stdout.splitlines():
+        try:
+            pids.append(int(line.strip()))
+        except ValueError:
+            continue
+    return pids
+
+
+def _terminate_wallmuxd_pids(pids: list[int]) -> None:
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            continue
+
+
+def _daemon_socket_running() -> bool:
+    try:
+        send_request({"command": "state"}, timeout_seconds=0.2)
+    except DaemonUnavailable:
+        return False
+    return True
+
+
+def _state_value(data: dict, key: str) -> str:
+    value = data.get(key)
+    if value in (None, ""):
+        return "unavailable; restart wallmuxd after upgrading Wallmux"
+    return str(value)
+
+
+def _format_seconds(value) -> str:
+    if value is None:
+        return "unavailable; restart wallmuxd after upgrading Wallmux"
+    try:
+        return f"{float(value):.1f}s"
+    except (TypeError, ValueError):
+        return str(value)
 
 
 if __name__ == "__main__":

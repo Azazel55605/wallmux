@@ -5,6 +5,7 @@ from pathlib import Path
 from wallmux.core.config import load_config
 from wallmux.core.daemon import WallmuxDaemon
 from wallmux.core.ipc import DaemonUnavailable, send_request
+from wallmux.core.monitors import Monitor
 from wallmux.core.state import WallmuxState, WallpaperEntry, load_state, save_state
 from wallmux.core.wallpaper import CommandRunner, WallmuxError
 
@@ -289,7 +290,8 @@ def test_daemon_reports_invalid_json(tmp_path: Path) -> None:
     assert "invalid JSON" in response["error"]
 
 
-def test_daemon_reports_empty_state(tmp_path: Path) -> None:
+def test_daemon_reports_empty_state(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("wallmux.core.daemon.list_monitors", lambda: [])
     daemon = WallmuxDaemon(
         config=sample_config(tmp_path),
         config_path=sample_config_path(tmp_path),
@@ -301,8 +303,56 @@ def test_daemon_reports_empty_state(tmp_path: Path) -> None:
 
     assert response["ok"] is True
     assert response["state"] == {"monitors": {}}
+    assert response["monitors"] == {}
     assert response["daemon"]["running"] is True
+    assert response["daemon"]["state_schema_version"] == 2
+    assert response["daemon"]["version"]
     assert response["daemon"]["autoswitch"]["enabled"] is False
+    assert "uptime_seconds" in response["daemon"]
+    assert response["daemon"]["last_error"] is None
+
+
+def test_daemon_state_includes_monitor_status_and_events(tmp_path: Path, monkeypatch) -> None:
+    state_path = tmp_path / "state.json"
+    save_state(
+        WallmuxState(
+            monitors={
+                "DP-1": WallpaperEntry(
+                    file="/tmp/wall.png",
+                    backend="awww",
+                    wallpaper_type="image",
+                ),
+                "HDMI-A-1": WallpaperEntry(
+                    file="/tmp/video.mp4",
+                    backend="mpvpaper",
+                    wallpaper_type="video",
+                    pid=1234,
+                ),
+            }
+        ),
+        state_path,
+    )
+    monkeypatch.setattr(
+        "wallmux.core.daemon.list_monitors",
+        lambda: [Monitor("DP-1", focused=True), Monitor("eDP-1")],
+    )
+    monkeypatch.setattr("wallmux.core.daemon.pid_is_alive", lambda pid: pid == 1234)
+    daemon = WallmuxDaemon(
+        config=sample_config(tmp_path),
+        config_path=sample_config_path(tmp_path),
+        state_path=state_path,
+        restore_on_startup=False,
+    )
+    daemon._record_event("test", "hello")
+
+    response = daemon.handle_request({"command": "state"})
+
+    assert response["monitors"]["DP-1"]["connected"] is True
+    assert response["monitors"]["DP-1"]["focused"] is True
+    assert response["monitors"]["HDMI-A-1"]["connected"] is False
+    assert response["monitors"]["HDMI-A-1"]["pid_alive"] is True
+    assert response["monitors"]["eDP-1"]["file"] is None
+    assert response["daemon"]["events"][-1]["message"] == "hello"
 
 
 def test_send_request_reports_unavailable_daemon(tmp_path: Path) -> None:
