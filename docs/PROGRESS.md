@@ -172,10 +172,11 @@ Goal: turn the current daily-driver base into a more diagnosable, resilient, and
 
 ### V2.3: Conservative Backend Fallbacks
 
-- [ ] Add image backend fallback chains for compatible backends such as `awww` -> `swww`
-- [ ] Keep `hyprpaper` opt-in rather than a default fallback for `awww`/`swww`
-- [ ] Add clear fallback logging so users know when the configured backend failed
-- [ ] Avoid cross-family fallbacks unless explicitly configured by the user
+- [x] Add image backend fallback chains for compatible backends such as `awww` -> `swww`
+- [x] Keep `hyprpaper` opt-in rather than a default fallback for `awww`/`swww`
+- [x] Add clear fallback logging so users know when the configured backend failed
+- [x] Avoid cross-family fallbacks unless explicitly configured by the user
+- [x] Add GUI settings for editing fallback chains without hand-editing TOML
 
 ### V2.4: Optional Daemon-Command Inhibition
 
@@ -286,3 +287,4 @@ Record notable checks here as the project moves.
 - 2026-05-25: Added notification icon support using the `wallmux-gui` app icon by default, including resolved icon paths and desktop-entry hints for notification daemons.
 - 2026-05-26: Started V2.1 with `wallmuxctl doctor` and `wallmuxctl doctor video` health checks for environment, backends, paths, daemon reachability, and video tooling.
 - 2026-05-26: Started V2.2 with richer daemon state, monitor status, recent daemon events, improved `wallmuxctl state`, and a GUI State tab with daemon/runtime and video doctor information.
+- 2026-05-26: Finished V2.3 conservative backend fallbacks with default `awww` -> `swww`, opt-in fallback chains, fallback logging, grouped all-monitor fallback handling, and GUI fallback settings.

@@ -51,7 +51,8 @@ class DoctorReport:
 
 
 def run_doctor(*, video_only: bool = False, config: dict[str, Any] | None = None) -> DoctorReport:
-    config = config or load_config()
+    if config is None:
+        config = load_config()
     checks: list[DoctorCheck] = []
     if not video_only:
         checks.extend(_core_checks(config))

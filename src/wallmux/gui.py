@@ -449,6 +449,26 @@ class WallmuxWindow(QMainWindow):
         routing_form.addRow("Videos", self.video_backend_default_box)
         backend_layout.addLayout(routing_form)
 
+        fallback_form = QFormLayout()
+        self.awww_fallbacks_edit = QLineEdit()
+        self.swww_fallbacks_edit = QLineEdit()
+        self.hyprpaper_fallbacks_edit = QLineEdit()
+        self.mpvpaper_fallbacks_edit = QLineEdit()
+        self.gslapper_fallbacks_edit = QLineEdit()
+        self.awww_fallbacks_edit.setPlaceholderText("swww")
+        self.swww_fallbacks_edit.setPlaceholderText("comma-separated backend names")
+        self.hyprpaper_fallbacks_edit.setPlaceholderText("opt-in only")
+        self.mpvpaper_fallbacks_edit.setPlaceholderText("gslapper")
+        self.gslapper_fallbacks_edit.setPlaceholderText("mpvpaper")
+        fallback_form.addRow("awww", self.awww_fallbacks_edit)
+        fallback_form.addRow("swww", self.swww_fallbacks_edit)
+        fallback_form.addRow("hyprpaper", self.hyprpaper_fallbacks_edit)
+        fallback_form.addRow("mpvpaper", self.mpvpaper_fallbacks_edit)
+        fallback_form.addRow("gSlapper", self.gslapper_fallbacks_edit)
+        fallback_box = QGroupBox("Fallback Chains")
+        fallback_box.setLayout(fallback_form)
+        backend_layout.addWidget(fallback_box)
+
         self.awww_command_edit = QLineEdit()
         self.awww_transition_type_box = self._transition_type_combo()
         self.awww_transition_step_spin = self._step_spin()
@@ -796,6 +816,13 @@ class WallmuxWindow(QMainWindow):
             "gif": self.gif_backend_default_box.currentText(),
             "video": self.video_backend_default_box.currentText(),
         }
+        self.config["backend_fallbacks"] = {
+            "awww": self._fallback_values(self.awww_fallbacks_edit),
+            "swww": self._fallback_values(self.swww_fallbacks_edit),
+            "hyprpaper": self._fallback_values(self.hyprpaper_fallbacks_edit),
+            "mpvpaper": self._fallback_values(self.mpvpaper_fallbacks_edit),
+            "gslapper": self._fallback_values(self.gslapper_fallbacks_edit),
+        }
         self.config["backends"] = {
             "awww": {
                 "command": self.awww_command_edit.text(),
@@ -1118,6 +1145,7 @@ class WallmuxWindow(QMainWindow):
     def refresh_backend_settings(self) -> None:
         general = self.config.get("general", {})
         backend_rules = self.config.get("backend_rules", {})
+        backend_fallbacks = self.config.get("backend_fallbacks", {})
         backends = self.config.get("backends", {})
 
         self._set_combo_data(
@@ -1127,6 +1155,19 @@ class WallmuxWindow(QMainWindow):
         self.image_backend_default_box.setCurrentText(str(backend_rules.get("image", "awww")))
         self.gif_backend_default_box.setCurrentText(str(backend_rules.get("gif", "awww")))
         self.video_backend_default_box.setCurrentText(str(backend_rules.get("video", "mpvpaper")))
+        self.awww_fallbacks_edit.setText(
+            self._fallback_text(backend_fallbacks.get("awww", ["swww"]))
+        )
+        self.swww_fallbacks_edit.setText(self._fallback_text(backend_fallbacks.get("swww", [])))
+        self.hyprpaper_fallbacks_edit.setText(
+            self._fallback_text(backend_fallbacks.get("hyprpaper", []))
+        )
+        self.mpvpaper_fallbacks_edit.setText(
+            self._fallback_text(backend_fallbacks.get("mpvpaper", []))
+        )
+        self.gslapper_fallbacks_edit.setText(
+            self._fallback_text(backend_fallbacks.get("gslapper", []))
+        )
 
         self._load_image_backend_settings("awww", backends.get("awww", {}))
         self._load_image_backend_settings("swww", backends.get("swww", {}))
@@ -1173,6 +1214,20 @@ class WallmuxWindow(QMainWindow):
         invert_y.setChecked(bool(backend_config.get("invert_y", False)))
         bezier.setText(str(backend_config.get("transition_bezier", ".54,0,.34,.99")))
         wave.setText(str(backend_config.get("transition_wave", "20,20")))
+
+    def _fallback_values(self, edit: QLineEdit) -> list[str]:
+        return [
+            item.strip()
+            for item in edit.text().split(",")
+            if item.strip()
+        ]
+
+    def _fallback_text(self, value: object) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return ", ".join(str(item) for item in value)
+        return ""
 
     def _transition_type_combo(self) -> QComboBox:
         combo = QComboBox()

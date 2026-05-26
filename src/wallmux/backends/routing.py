@@ -17,6 +17,10 @@ DEFAULT_BACKENDS = {
     WallpaperType.VIDEO: "mpvpaper",
 }
 
+DEFAULT_FALLBACKS = {
+    "awww": ("swww",),
+}
+
 COMPATIBLE_BACKENDS = {
     WallpaperType.IMAGE: ("awww", "swww", "hyprpaper"),
     WallpaperType.GIF: ("awww", "swww", "mpvpaper", "gslapper"),
@@ -38,6 +42,29 @@ def route_wallpaper(
         raise ValueError(f"no backend route for wallpaper type: {wallpaper_type.value}")
 
     return DEFAULT_BACKENDS[wallpaper_type]
+
+
+def fallback_backends(
+    backend: str,
+    wallpaper_type: WallpaperType,
+    config: dict[str, Any] | None = None,
+) -> tuple[str, ...]:
+    configured = (config or {}).get("backend_fallbacks", {})
+    fallback_names = configured.get(backend, DEFAULT_FALLBACKS.get(backend, ()))
+    if isinstance(fallback_names, str):
+        fallback_names = [fallback_names]
+
+    compatible = compatible_backends(wallpaper_type)
+    fallbacks = []
+    for fallback in fallback_names:
+        fallback_name = str(fallback)
+        if fallback_name == backend:
+            continue
+        if fallback_name not in compatible:
+            continue
+        if fallback_name not in fallbacks:
+            fallbacks.append(fallback_name)
+    return tuple(fallbacks)
 
 
 def build_backend(

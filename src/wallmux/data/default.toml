@@ -13,6 +13,13 @@ image = "awww"
 gif = "awww"
 video = "mpvpaper"
 
+[backend_fallbacks]
+awww = ["swww"]
+swww = []
+hyprpaper = []
+mpvpaper = []
+gslapper = []
+
 [backends.awww]
 command = "awww"
 transition_type = "grow"

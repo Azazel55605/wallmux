@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -9,7 +10,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from wallmux.backends.routing import build_backend, compatible_backends, route_wallpaper
+from platformdirs import user_state_path
+
+from wallmux.backends.routing import (
+    build_backend,
+    compatible_backends,
+    fallback_backends,
+    route_wallpaper,
+)
 from wallmux.core.config import load_config
 from wallmux.core.hooks import HookContext, run_hook_stage
 from wallmux.core.mime import WallpaperType, detect_wallpaper_type
@@ -20,6 +28,7 @@ from wallmux.core.transition_effects import TransitionContext, run_transition_st
 from wallmux.core.transitions import TransitionKind, plan_transition
 
 STATE_LOCK = threading.Lock()
+APP_NAME = "wallmux"
 Command = list[str]
 CommandPlan = Command | list[Command]
 IMAGE_BACKENDS = {"awww", "swww", "hyprpaper"}
@@ -95,6 +104,55 @@ def set_wallpaper(
         dict,
     ):
         raise WallmuxError("backend_config must be an object")
+    with STATE_LOCK:
+        state = load_state(state_path)
+        previous = state.monitors.get(monitor)
+        if previous and previous.pid and not pid_is_alive(previous.pid):
+            previous.pid = None
+            save_state(state, state_path)
+
+    candidates = _backend_candidates(
+        backend_name,
+        wallpaper_type,
+        config,
+        allow_fallbacks=backend_override is None,
+    )
+    failures: list[str] = []
+    for index, candidate in enumerate(candidates):
+        try:
+            return _set_wallpaper_with_backend(
+                resolved_file,
+                monitor,
+                wallpaper_type,
+                candidate,
+                config=config,
+                backend_config_overrides=backend_config_overrides,
+                runner=runner,
+                state_path=state_path,
+                previous=previous,
+            )
+        except WallmuxError as error:
+            failures.append(f"{candidate}: {error}")
+            if index < len(candidates) - 1:
+                _log_backend_fallback(candidate, candidates[index + 1], error)
+                continue
+            raise WallmuxError("; ".join(failures)) from error
+
+    raise WallmuxError(f"no backend candidates for {wallpaper_type.value} wallpaper")
+
+
+def _set_wallpaper_with_backend(
+    resolved_file: Path,
+    monitor: str,
+    wallpaper_type: WallpaperType,
+    backend_name: str,
+    *,
+    config: dict,
+    backend_config_overrides: dict[str, Any] | None,
+    runner: CommandRunner,
+    state_path: Path | None,
+    previous: WallpaperEntry | None,
+) -> SetResult:
     backend = build_backend(backend_name, config, backend_config_overrides)
     command = backend.build_set_command(resolved_file, monitor)
     hook_context = HookContext(
@@ -105,15 +163,7 @@ def set_wallpaper(
     )
 
     run_hook_stage("before_set", config, hook_context)
-
-    with STATE_LOCK:
-        state = load_state(state_path)
-        previous = state.monitors.get(monitor)
-        transition = plan_transition(previous, wallpaper_type, backend_name)
-        if previous and previous.pid and not pid_is_alive(previous.pid):
-            previous.pid = None
-            save_state(state, state_path)
-
+    transition = plan_transition(previous, wallpaper_type, backend_name)
     transition_context = TransitionContext(
         monitor=monitor,
         to_file=resolved_file,
@@ -163,7 +213,16 @@ def set_wallpaper(
         )
         save_state(state, state_path)
     run_transition_stage("after", config, transition_context)
-    run_hook_stage("after_set", config, hook_context)
+    run_hook_stage(
+        "after_set",
+        config,
+        HookContext(
+            file=resolved_file,
+            monitor=monitor,
+            backend=backend_name,
+            wallpaper_type=wallpaper_type,
+        ),
+    )
 
     return SetResult(
         monitor=monitor,
@@ -316,6 +375,50 @@ def _execute(
     return None
 
 
+def _backend_candidates(
+    backend_name: str,
+    wallpaper_type: WallpaperType,
+    config: dict,
+    *,
+    allow_fallbacks: bool,
+) -> tuple[str, ...]:
+    if not allow_fallbacks:
+        return (backend_name,)
+    fallbacks = fallback_backends(backend_name, wallpaper_type, config)
+    return (backend_name, *fallbacks)
+
+
+def backend_log_file() -> Path:
+    return user_state_path(APP_NAME) / "backends.log"
+
+
+def get_backend_logger() -> logging.Logger:
+    logger = logging.getLogger("wallmux.backends")
+    if logger.handlers:
+        return logger
+
+    log_file = backend_log_file()
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(log_file, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    return logger
+
+
+def _log_backend_fallback(failed_backend: str, fallback_backend: str, error: Exception) -> None:
+    try:
+        get_backend_logger().warning(
+            "backend %s failed; trying fallback %s: %s",
+            failed_backend,
+            fallback_backend,
+            error,
+        )
+    except OSError:
+        return
+
+
 def _can_set_all_outputs_together(
     file: Path,
     config: dict,
@@ -350,9 +453,7 @@ def _set_image_wallpaper_for_all_outputs(
         raise WallmuxError(
             f"{backend_override} cannot handle {wallpaper_type.value} wallpapers"
         )
-    backend = build_backend(backend_name, config, backend_config_overrides)
     joined_outputs = ",".join(monitors)
-    command = backend.build_set_command(resolved_file, joined_outputs)
 
     transitions: dict[str, TransitionKind] = {}
     pids_to_stop: list[int] = []
@@ -385,7 +486,34 @@ def _set_image_wallpaper_for_all_outputs(
         wallpaper_type=wallpaper_type,
     )
     run_hook_stage("before_set", config, hook_context)
-    _run_foreground(command, runner)
+    candidates = _backend_candidates(
+        backend_name,
+        wallpaper_type,
+        config,
+        allow_fallbacks=backend_override is None,
+    )
+    command: CommandPlan | None = None
+    failures: list[str] = []
+    for index, candidate in enumerate(candidates):
+        backend = build_backend(candidate, config, backend_config_overrides)
+        command = backend.build_set_command(resolved_file, joined_outputs)
+        try:
+            _run_foreground(command, runner)
+        except WallmuxError as error:
+            failures.append(f"{candidate}: {error}")
+            if index < len(candidates) - 1:
+                _log_backend_fallback(
+                    candidate,
+                    candidates[index + 1],
+                    error,
+                )
+                continue
+            raise WallmuxError("; ".join(failures)) from error
+        backend_name = candidate
+        break
+
+    if command is None:
+        raise WallmuxError(f"no backend candidates for {wallpaper_type.value} wallpaper")
 
     if stop_videos_after_image_set:
         _terminate_pids(
@@ -405,7 +533,16 @@ def _set_image_wallpaper_for_all_outputs(
             )
         save_state(state, state_path)
 
-    run_hook_stage("after_set", config, hook_context)
+    run_hook_stage(
+        "after_set",
+        config,
+        HookContext(
+            file=resolved_file,
+            monitor=joined_outputs,
+            backend=backend_name,
+            wallpaper_type=wallpaper_type,
+        ),
+    )
     return [
         SetResult(
             monitor=monitor,

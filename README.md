@@ -85,6 +85,19 @@ The global backend defaults also include transition step, duration, FPS, angle, 
 
 `hyprpaper` support uses `hyprctl hyprpaper preload` followed by `hyprctl hyprpaper wallpaper`, so the `hyprpaper` daemon must already be running with IPC enabled.
 
+Backend fallbacks are conservative. By default, `awww` can fall back to `swww` for compatible image/GIF sets. `hyprpaper` is opt-in as a fallback because it uses a different daemon model. Explicit per-wallpaper backend choices do not fall back; they fail clearly so testing a specific backend stays honest.
+
+```toml
+[backend_fallbacks]
+awww = ["swww"]
+swww = []
+hyprpaper = []
+mpvpaper = []
+gslapper = []
+```
+
+Fallback chains can also be edited under `Settings -> Backends -> Fallback Chains`.
+
 The GUI requests a dialog-style Qt window so Hyprland can treat it like a floating manager window by default.
 Its Wayland app id is `wallmux-gui` and its window title is `wallmux`, so Hyprland rules can match either:
 

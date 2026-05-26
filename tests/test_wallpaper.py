@@ -8,6 +8,7 @@ from wallmux.core.state import load_state
 from wallmux.core.transitions import TransitionKind
 from wallmux.core.wallpaper import (
     CommandRunner,
+    WallmuxError,
     restore_wallpapers,
     set_wallpaper,
     set_wallpaper_for_all,
@@ -28,6 +29,13 @@ class FakeRunner(CommandRunner):
         self.starts.append(command)
         self.next_pid += 1
         return self.next_pid
+
+
+class FailingFirstRunner(FakeRunner):
+    def run(self, command: list[str]) -> None:
+        self.runs.append(command)
+        if command[0] == "awww":
+            raise WallmuxError("awww failed")
 
 
 def _option(command: list[str], name: str) -> str:
@@ -70,6 +78,50 @@ def test_set_image_executes_awww_and_saves_state(tmp_path: Path) -> None:
     state = load_state(state_path)
     assert state.monitors["DP-1"].file == str(image)
     assert state.monitors["DP-1"].pid is None
+
+
+def test_set_image_falls_back_from_awww_to_swww(tmp_path: Path) -> None:
+    runner = FailingFirstRunner()
+    state_path = tmp_path / "state.json"
+    image = tmp_path / "wallpaper.png"
+    image.write_bytes(b"")
+
+    result = set_wallpaper(
+        image,
+        "DP-1",
+        config=sample_config(tmp_path),
+        runner=runner,
+        state_path=state_path,
+    )
+
+    assert result.backend == "swww"
+    assert runner.runs[0][0] == "awww"
+    assert runner.runs[1][0] == "swww"
+    state = load_state(state_path)
+    assert state.monitors["DP-1"].backend == "swww"
+
+
+def test_backend_override_does_not_fallback(tmp_path: Path) -> None:
+    runner = FailingFirstRunner()
+    state_path = tmp_path / "state.json"
+    image = tmp_path / "wallpaper.png"
+    image.write_bytes(b"")
+
+    try:
+        set_wallpaper(
+            image,
+            "DP-1",
+            config=sample_config(tmp_path),
+            backend_override="awww",
+            runner=runner,
+            state_path=state_path,
+        )
+    except WallmuxError as error:
+        assert "awww failed" in str(error)
+    else:
+        raise AssertionError("expected explicit backend failure")
+
+    assert len(runner.runs) == 1
 
 
 def test_set_video_starts_mpvpaper_and_saves_pid(tmp_path: Path) -> None:
@@ -267,6 +319,28 @@ def test_set_all_images_uses_one_backend_command_for_all_outputs(tmp_path: Path)
     assert _option(runner.runs[0], "--outputs") == "DP-1,HDMI-A-1"
     state = load_state(state_path)
     assert sorted(state.monitors) == ["DP-1", "HDMI-A-1"]
+
+
+def test_set_all_images_falls_back_with_one_grouped_command(tmp_path: Path) -> None:
+    runner = FailingFirstRunner()
+    state_path = tmp_path / "state.json"
+    image = tmp_path / "wallpaper.jpg"
+    image.write_bytes(b"")
+
+    results = set_wallpaper_for_all(
+        image,
+        config=sample_config(tmp_path),
+        runner=runner,
+        monitor_provider=lambda: [Monitor("DP-1"), Monitor("HDMI-A-1")],
+        state_path=state_path,
+    )
+
+    assert [result.backend for result in results] == ["swww", "swww"]
+    assert [command[0] for command in runner.runs] == ["awww", "swww"]
+    assert _option(runner.runs[1], "--outputs") == "DP-1,HDMI-A-1"
+    state = load_state(state_path)
+    assert state.monitors["DP-1"].backend == "swww"
+    assert state.monitors["HDMI-A-1"].backend == "swww"
 
 
 def test_set_all_video_to_image_stops_videos_together(
