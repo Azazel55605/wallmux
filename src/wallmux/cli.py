@@ -10,6 +10,17 @@ from pathlib import Path
 
 from wallmux.backends.routing import route_wallpaper
 from wallmux.core.autoswitch import choose_wallpaper, load_wallpaper_library
+from wallmux.core.cache import (
+    cache_clean_result_json,
+    cache_rebuild_result_json,
+    cache_stats,
+    cache_stats_json,
+    clean_cache,
+    format_cache_clean_result,
+    format_cache_rebuild_result,
+    format_cache_stats,
+    rebuild_cache,
+)
 from wallmux.core.config import load_config, user_config_file, write_config
 from wallmux.core.doctor import doctor_report_json, format_doctor_report, run_doctor
 from wallmux.core.ipc import DaemonUnavailable, send_request
@@ -35,7 +46,6 @@ from wallmux.core.video import (
     optimize_video_library,
     plan_video_optimization,
     video_inspection_json,
-    video_library_optimization_result_json,
     video_optimization_plan_json,
     video_optimization_result_json,
 )
@@ -190,6 +200,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Confirm the bulk operation.",
     )
     video_optimize_library.add_argument("--json", action="store_true", help="Print JSON.")
+
+    cache = subparsers.add_parser("cache", help="Inspect and maintain Wallmux caches.")
+    cache_subparsers = cache.add_subparsers(dest="cache_command", required=True)
+    cache_stats_cmd = cache_subparsers.add_parser("stats", help="Show cache usage.")
+    cache_stats_cmd.add_argument("--json", action="store_true", help="Print JSON.")
+    cache_clean = cache_subparsers.add_parser("clean", help="Clean cached files.")
+    cache_clean.add_argument("--videos", action="store_true", help="Only clean video cache.")
+    cache_clean.add_argument("--thumbnails", action="store_true", help="Only clean thumbnails.")
+    cache_clean.add_argument(
+        "--policy",
+        choices=["stale-only", "lru", "all"],
+        default=None,
+        help="Cleanup policy. Defaults to config.",
+    )
+    cache_clean.add_argument("--json", action="store_true", help="Print JSON.")
+    cache_rebuild = cache_subparsers.add_parser("rebuild", help="Rebuild cached files.")
+    cache_rebuild.add_argument("--videos", action="store_true", help="Only rebuild video cache.")
+    cache_rebuild.add_argument(
+        "--thumbnails",
+        action="store_true",
+        help="Only rebuild thumbnails.",
+    )
+    cache_rebuild.add_argument(
+        "--force-videos",
+        action="store_true",
+        help="Re-encode videos even when they already match the optimization profile.",
+    )
+    cache_rebuild.add_argument("--json", action="store_true", help="Print JSON.")
 
     return parser
 
@@ -388,6 +426,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "video":
         return _handle_video(args)
 
+    if args.command == "cache":
+        return _handle_cache(args)
+
     return 1
 
 
@@ -517,6 +558,7 @@ def _handle_video(args) -> int:
         if args.video_command == "optimize" and not args.dry_run:
             config = load_config()
             try:
+                cache_before = cache_stats(config).optimized_videos.bytes
                 progress = None if args.json else _video_progress_printer()
                 result = optimize_video(
                     args.file,
@@ -525,6 +567,7 @@ def _handle_video(args) -> int:
                     config=config,
                     progress_callback=progress,
                 )
+                cache_after = cache_stats(config).optimized_videos.bytes
             except VideoInspectionError as error:
                 print(f"wallmuxctl: {error}")
                 return 1
@@ -534,6 +577,8 @@ def _handle_video(args) -> int:
                 print(video_optimization_result_json(result))
             else:
                 print(format_video_optimization_result(result))
+                print(f"cache before: {_format_cli_bytes(cache_before)}")
+                print(f"cache after: {_format_cli_bytes(cache_after)}")
             return 0
         try:
             plan = plan_video_optimization(args.file, profile=args.profile, config=load_config())
@@ -552,10 +597,12 @@ def _handle_video(args) -> int:
         video_count = sum(1 for item in items if item.wallpaper_type.value == "video")
         input_size = estimated_optimization_input_size(items)
         if args.dry_run:
+            current_cache_size = cache_stats(config).optimized_videos.bytes
             payload = {
                 "profile": profile,
                 "videos": video_count,
                 "estimated_input_size": input_size,
+                "optimized_video_cache_size": current_cache_size,
             }
             if args.json:
                 print(json.dumps(payload, indent=2, sort_keys=True))
@@ -563,6 +610,7 @@ def _handle_video(args) -> int:
                 print(f"profile: {profile}")
                 print(f"videos: {video_count}")
                 print(f"estimated input: {_format_cli_bytes(input_size)}")
+                print(f"current optimized cache: {_format_cli_bytes(current_cache_size)}")
             return 0
         if not args.yes:
             print(
@@ -573,6 +621,7 @@ def _handle_video(args) -> int:
             print(f"estimated input: {_format_cli_bytes(input_size)}")
             return 1
         progress = None if args.json else _video_library_progress_printer()
+        cache_before = cache_stats(config).optimized_videos.bytes
         result = optimize_video_library(
             items,
             profile=profile,
@@ -580,14 +629,74 @@ def _handle_video(args) -> int:
             config=config,
             progress_callback=progress,
         )
+        cache_after = cache_stats(config).optimized_videos.bytes
         if progress is not None:
             print(file=sys.stderr)
         if args.json:
-            print(video_library_optimization_result_json(result))
+            payload = result.as_dict()
+            payload["cache"] = {
+                "optimized_video_before": cache_before,
+                "optimized_video_after": cache_after,
+            }
+            print(json.dumps(payload, indent=2, sort_keys=True))
         else:
             print(format_video_library_optimization_result(result))
+            print(f"cache before: {_format_cli_bytes(cache_before)}")
+            print(f"cache after: {_format_cli_bytes(cache_after)}")
         return 0
     return 1
+
+
+def _handle_cache(args) -> int:
+    config = effective_config_for_profile(load_config())
+
+    if args.cache_command == "stats":
+        stats = cache_stats(config)
+        if args.json:
+            print(cache_stats_json(stats))
+        else:
+            print(format_cache_stats(stats))
+        return 0
+
+    include_videos, include_thumbnails = _cache_scope(args)
+
+    if args.cache_command == "clean":
+        result = clean_cache(
+            config,
+            include_videos=include_videos,
+            include_thumbnails=include_thumbnails,
+            policy=args.policy,
+        )
+        if args.json:
+            print(cache_clean_result_json(result))
+        else:
+            print(format_cache_clean_result(result))
+        return 1 if result.errors else 0
+
+    if args.cache_command == "rebuild":
+        items = load_wallpaper_library(config)
+        result = rebuild_cache(
+            items,
+            config,
+            include_videos=include_videos,
+            include_thumbnails=include_thumbnails,
+            force_videos=args.force_videos,
+        )
+        if args.json:
+            print(cache_rebuild_result_json(result))
+        else:
+            print(format_cache_rebuild_result(result))
+        return 1 if result.errors else 0
+
+    return 1
+
+
+def _cache_scope(args) -> tuple[bool, bool]:
+    if args.videos and not args.thumbnails:
+        return True, False
+    if args.thumbnails and not args.videos:
+        return False, True
+    return True, True
 
 
 def _daemon_running() -> bool:

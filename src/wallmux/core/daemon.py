@@ -21,6 +21,7 @@ from wallmux.core.autoswitch import (
     choose_wallpaper,
     load_wallpaper_library,
 )
+from wallmux.core.cache import clean_cache
 from wallmux.core.config import load_config, user_config_file
 from wallmux.core.inhibition import (
     InhibitionStatus,
@@ -80,6 +81,7 @@ class WallmuxDaemon:
         self.startup_restore_pending = False
         self.next_startup_restore_at = time.monotonic()
         self.next_inhibition_check_at = 0.0
+        self.next_cache_maintenance_at = time.monotonic() + self._cache_cleanup_interval()
         self.inhibition_status = InhibitionStatus(False)
         self.high_load_started_at: float | None = None
         self.paused_video_pids: set[int] = set()
@@ -165,10 +167,12 @@ class WallmuxDaemon:
         self.config = load_config(self.config_path)
         self.next_autoswitch_at = time.monotonic() + autoswitch_interval(self.config)
         self.next_inhibition_check_at = 0.0
+        self.next_cache_maintenance_at = time.monotonic() + self._cache_cleanup_interval()
 
     def tick(self) -> None:
         self._retry_startup_restore()
         self._update_inhibition()
+        self._run_cache_maintenance()
         if not autoswitch_enabled(self.config):
             return
         if self.inhibition_status.inhibited and self._should_pause_autoswitch():
@@ -429,6 +433,32 @@ class WallmuxDaemon:
         return max(
             1.0,
             float(self.config.get("daemon", {}).get("startup_restore_retry_seconds", 5.0)),
+        )
+
+    def _run_cache_maintenance(self) -> None:
+        if not bool(self.config.get("cache", {}).get("maintenance_enabled", True)):
+            return
+        now = time.monotonic()
+        if now < self.next_cache_maintenance_at:
+            return
+        self.next_cache_maintenance_at = now + self._cache_cleanup_interval()
+        result = clean_cache(self.config)
+        if result.removed_files:
+            self._record_event(
+                "cache",
+                f"removed {result.removed_files} cached file(s)",
+            )
+        if result.errors:
+            self._record_event(
+                "cache",
+                f"cleanup finished with {len(result.errors)} error(s)",
+                status="warning",
+            )
+
+    def _cache_cleanup_interval(self) -> float:
+        return max(
+            60.0,
+            float(self.config.get("cache", {}).get("cleanup_interval_seconds", 86400)),
         )
 
     def _update_inhibition(self, *, force: bool = False) -> None:

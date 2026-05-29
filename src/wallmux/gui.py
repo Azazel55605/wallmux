@@ -11,6 +11,14 @@ import traceback
 from pathlib import Path
 
 from wallmux.backends.routing import compatible_backends
+from wallmux.core.cache import (
+    cache_stats,
+    clean_cache,
+    format_cache_clean_result,
+    format_cache_rebuild_result,
+    format_cache_stats,
+    rebuild_cache,
+)
 from wallmux.core.config import load_config, user_config_file, write_config
 from wallmux.core.doctor import format_doctor_report, run_doctor
 from wallmux.core.hooks import hook_log_file
@@ -144,10 +152,13 @@ class ThumbnailTask(QRunnable):
     @Slot()
     def run(self) -> None:
         thumbnail = ensure_thumbnail(self.item.path, self.item.wallpaper_type, self.size)
-        if thumbnail is None:
-            self.signals.failed.emit(str(self.item.path))
+        try:
+            if thumbnail is None:
+                self.signals.failed.emit(str(self.item.path))
+                return
+            self.signals.loaded.emit(str(self.item.path), str(thumbnail))
+        except RuntimeError:
             return
-        self.signals.loaded.emit(str(self.item.path), str(thumbnail))
 
 
 class VideoOptimizeSignals(QObject):
@@ -155,6 +166,11 @@ class VideoOptimizeSignals(QObject):
     source_progress = Signal(str, float, str)
     source_done = Signal(str, str)
     source_failed = Signal(str, str)
+    finished = Signal(str)
+    failed = Signal(str)
+
+
+class CacheMaintenanceSignals(QObject):
     finished = Signal(str)
     failed = Signal(str)
 
@@ -190,12 +206,15 @@ class VideoOptimizeTask(QRunnable):
                     progress_callback=self._library_progress,
                 )
                 for item in result.optimized:
-                    self.signals.source_done.emit(str(item.plan.source), item.message)
+                    self._emit(self.signals.source_done, str(item.plan.source), item.message)
                 for item in result.skipped:
-                    self.signals.source_done.emit(str(item.plan.source), item.message)
+                    self._emit(self.signals.source_done, str(item.plan.source), item.message)
                 for item in result.failed:
-                    self.signals.source_failed.emit(item["file"], item["error"])
-                self.signals.finished.emit(format_video_library_optimization_result(result))
+                    self._emit(self.signals.source_failed, item["file"], item["error"])
+                self._emit(
+                    self.signals.finished,
+                    format_video_library_optimization_result(result),
+                )
                 return
 
             result = optimize_video(
@@ -205,17 +224,18 @@ class VideoOptimizeTask(QRunnable):
                 config=self.config,
                 progress_callback=self._progress,
             )
-            self.signals.source_done.emit(str(result.plan.source), result.message)
-            self.signals.finished.emit(format_video_optimization_result(result))
+            self._emit(self.signals.source_done, str(result.plan.source), result.message)
+            self._emit(self.signals.finished, format_video_optimization_result(result))
         except Exception as error:  # pragma: no cover - defensive GUI boundary.
             if self.items:
-                self.signals.source_failed.emit(str(self.items[0].path), str(error))
-            self.signals.failed.emit(str(error))
+                self._emit(self.signals.source_failed, str(self.items[0].path), str(error))
+            self._emit(self.signals.failed, str(error))
 
     def _library_progress(self, path: Path, progress) -> None:
         message = f"{path.name}: {_video_progress_text(progress)}"
-        self.signals.progress.emit(message)
-        self.signals.source_progress.emit(
+        self._emit(self.signals.progress, message)
+        self._emit(
+            self.signals.source_progress,
             str(path),
             -1.0 if progress.percent is None else progress.percent,
             message,
@@ -223,12 +243,72 @@ class VideoOptimizeTask(QRunnable):
 
     def _progress(self, progress) -> None:
         message = _video_progress_text(progress)
-        self.signals.progress.emit(message)
-        self.signals.source_progress.emit(
+        self._emit(self.signals.progress, message)
+        self._emit(
+            self.signals.source_progress,
             str(self.items[0].path),
             -1.0 if progress.percent is None else progress.percent,
             message,
         )
+
+    def _emit(self, signal, *args) -> None:
+        try:
+            signal.emit(*args)
+        except RuntimeError:
+            return
+
+
+class CacheMaintenanceTask(QRunnable):
+    def __init__(
+        self,
+        *,
+        mode: str,
+        config: dict,
+        items: list[WallpaperItem] | None = None,
+        include_thumbnails: bool = True,
+        include_videos: bool = True,
+        policy: str | None = None,
+        force_videos: bool = False,
+    ) -> None:
+        super().__init__()
+        self.setAutoDelete(False)
+        self.mode = mode
+        self.config = config
+        self.items = items or []
+        self.include_thumbnails = include_thumbnails
+        self.include_videos = include_videos
+        self.policy = policy
+        self.force_videos = force_videos
+        self.signals = CacheMaintenanceSignals()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            if self.mode == "clean":
+                result = clean_cache(
+                    self.config,
+                    include_thumbnails=self.include_thumbnails,
+                    include_videos=self.include_videos,
+                    policy=self.policy,
+                )
+                self._emit(self.signals.finished, format_cache_clean_result(result))
+                return
+            result = rebuild_cache(
+                self.items,
+                self.config,
+                include_thumbnails=self.include_thumbnails,
+                include_videos=self.include_videos,
+                force_videos=self.force_videos,
+            )
+            self._emit(self.signals.finished, format_cache_rebuild_result(result))
+        except Exception as error:  # pragma: no cover - defensive GUI boundary.
+            self._emit(self.signals.failed, str(error))
+
+    def _emit(self, signal, *args) -> None:
+        try:
+            signal.emit(*args)
+        except RuntimeError:
+            return
 
 
 class WallmuxWindow(QMainWindow):
@@ -243,6 +323,8 @@ class WallmuxWindow(QMainWindow):
         self.thumbnail_pixmaps: dict[str, QPixmap] = {}
         self.video_optimize_tasks: dict[str, VideoOptimizeTask] = {}
         self.video_optimize_state: dict[str, dict] = {}
+        self.video_cache_size_before: int | None = None
+        self.cache_task: CacheMaintenanceTask | None = None
         self.zen_mode = False
         self.daemon_running = False
         self.profile_settings_loading = False
@@ -427,6 +509,7 @@ class WallmuxWindow(QMainWindow):
         profiles_page, profiles_layout = self._settings_page()
         backend_page, backend_page_layout = self._settings_page()
         video_page, video_layout = self._settings_page()
+        cache_page, cache_layout = self._settings_page()
         autoswitch_page, autoswitch_layout = self._settings_page()
         inhibition_page, inhibition_layout = self._settings_page()
         notifications_page, notifications_layout = self._settings_page()
@@ -1208,6 +1291,77 @@ class WallmuxWindow(QMainWindow):
         video_layout.addWidget(self.video_opt_log)
         video_layout.addStretch(1)
 
+        cache_group = QGroupBox("Cache Maintenance")
+        cache_form = QFormLayout(cache_group)
+        self.cache_maintenance_check = QCheckBox("Periodic daemon cleanup")
+        self.cache_cleanup_policy_box = QComboBox()
+        self.cache_cleanup_policy_box.addItem("Stale only", "stale-only")
+        self.cache_cleanup_policy_box.addItem("Least recently used", "lru")
+        self.cache_cleanup_policy_box.addItem("All cached files", "all")
+        self.cache_cleanup_interval_spin = QSpinBox()
+        self.cache_cleanup_interval_spin.setRange(60, 604800)
+        self.cache_cleanup_interval_spin.setSingleStep(3600)
+        self.cache_thumbnail_age_spin = QSpinBox()
+        self.cache_thumbnail_age_spin.setRange(0, 3650)
+        self.cache_video_limit_spin = QSpinBox()
+        self.cache_video_limit_spin.setRange(0, 1_000_000)
+        self.cache_video_limit_spin.setSingleStep(1024)
+        cache_form.addRow("", self.cache_maintenance_check)
+        cache_form.addRow(
+            _form_label(
+                "Policy",
+                "Stale-only validates videos and age-cleans thumbnails. "
+                "LRU also trims videos to the configured size limit.",
+            ),
+            self.cache_cleanup_policy_box,
+        )
+        cache_form.addRow(
+            _form_label("Interval", "Seconds between daemon cache maintenance runs."),
+            self.cache_cleanup_interval_spin,
+        )
+        cache_form.addRow(
+            _form_label(
+                "Thumbnail Age",
+                "Days before thumbnail files count as stale. Set 0 to disable age cleanup.",
+            ),
+            self.cache_thumbnail_age_spin,
+        )
+        cache_form.addRow(
+            _form_label(
+                "Video Limit",
+                "Maximum optimized-video cache size in MiB. "
+                "Set 0 to disable LRU size trimming.",
+            ),
+            self.cache_video_limit_spin,
+        )
+        cache_buttons = QHBoxLayout()
+        save_cache_button = QPushButton("Save Cache Settings")
+        save_cache_button.clicked.connect(self.save_cache_settings)
+        refresh_cache_button = QPushButton("Refresh Stats")
+        refresh_cache_button.clicked.connect(self.refresh_cache_stats)
+        clean_stale_button = QPushButton("Clean Stale")
+        clean_stale_button.clicked.connect(lambda: self.clean_cache_gui("stale-only"))
+        clean_lru_button = QPushButton("Clean LRU")
+        clean_lru_button.clicked.connect(lambda: self.clean_cache_gui("lru"))
+        rebuild_thumbnails_button = QPushButton("Rebuild Thumbnails")
+        rebuild_thumbnails_button.clicked.connect(self.rebuild_thumbnail_cache_gui)
+        rebuild_videos_button = QPushButton("Rebuild Videos")
+        rebuild_videos_button.clicked.connect(self.rebuild_video_cache_gui)
+        cache_buttons.addWidget(save_cache_button)
+        cache_buttons.addWidget(refresh_cache_button)
+        cache_buttons.addWidget(clean_stale_button)
+        cache_buttons.addWidget(clean_lru_button)
+        cache_buttons.addWidget(rebuild_thumbnails_button)
+        cache_buttons.addWidget(rebuild_videos_button)
+        cache_buttons.addStretch(1)
+        self.cache_stats_view = QTextEdit()
+        self.cache_stats_view.setReadOnly(True)
+        self.cache_stats_view.setMinimumHeight(170)
+        cache_layout.addWidget(cache_group)
+        cache_layout.addLayout(cache_buttons)
+        cache_layout.addWidget(self.cache_stats_view)
+        cache_layout.addStretch(1)
+
         self.hook_log_view = QTextEdit()
         self.hook_log_view.setReadOnly(True)
         self.hook_log_view.setMinimumHeight(140)
@@ -1285,6 +1439,7 @@ class WallmuxWindow(QMainWindow):
         self.settings_tabs.addTab(profiles_page, "Profiles")
         self.settings_tabs.addTab(backend_page, "Backends")
         self.settings_tabs.addTab(video_page, "Video")
+        self.settings_tabs.addTab(cache_page, "Cache")
         self.settings_tabs.addTab(autoswitch_page, "Auto")
         self.settings_tabs.addTab(inhibition_page, "Inhibition")
         self.settings_tabs.addTab(notifications_page, "Notifications")
@@ -1916,6 +2071,7 @@ class WallmuxWindow(QMainWindow):
 
     def _start_video_optimize_task(self, items: list[WallpaperItem], *, library: bool) -> None:
         self.video_opt_log.clear()
+        self.video_cache_size_before = cache_stats(self.config).optimized_videos.bytes
         task = VideoOptimizeTask(
             items,
             profile=self.video_opt_profile_box.currentText(),
@@ -1988,11 +2144,92 @@ class WallmuxWindow(QMainWindow):
             self.video_optimize_tasks.pop(source_path, None)
 
     def _video_optimize_finished(self, message: str) -> None:
-        self.video_opt_log.setPlainText(message)
+        cache_after = cache_stats(self.config).optimized_videos.bytes
+        cache_lines = []
+        if self.video_cache_size_before is not None:
+            cache_lines = [
+                "",
+                f"cache before: {_format_bytes(self.video_cache_size_before)}",
+                f"cache after: {_format_bytes(cache_after)}",
+            ]
+        self.video_cache_size_before = None
+        self.video_opt_log.setPlainText("\n".join([message, *cache_lines]))
+        self.refresh_cache_stats()
         self.status.showMessage("Video optimization finished", 6000)
 
     def _video_optimize_failed(self, message: str) -> None:
         self.video_opt_log.setPlainText(message)
+        QMessageBox.critical(self, "Wallmux", message)
+
+    def save_cache_settings(self) -> None:
+        self.config["cache"] = {
+            "maintenance_enabled": self.cache_maintenance_check.isChecked(),
+            "cleanup_interval_seconds": self.cache_cleanup_interval_spin.value(),
+            "cleanup_policy": self.cache_cleanup_policy_box.currentData(),
+            "thumbnail_max_age_days": self.cache_thumbnail_age_spin.value(),
+            "optimized_video_max_size_mb": self.cache_video_limit_spin.value(),
+        }
+        write_config(self.config, user_config_file())
+        try:
+            send_request({"command": "reload"})
+        except DaemonUnavailable:
+            self.status.showMessage("Cache settings saved; wallmuxd is not running", 6000)
+            return
+        self.status.showMessage("Cache settings saved and reloaded", 5000)
+
+    def clean_cache_gui(self, policy: str) -> None:
+        self.save_cache_settings()
+        self._start_cache_task("clean", policy=policy)
+
+    def rebuild_thumbnail_cache_gui(self) -> None:
+        self._start_cache_task("rebuild", include_thumbnails=True, include_videos=False)
+
+    def rebuild_video_cache_gui(self) -> None:
+        if (
+            QMessageBox.question(
+                self,
+                "Wallmux",
+                "Rebuild optimized video cache for the current library? This can take a while.",
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        self.save_cache_settings()
+        self._start_cache_task("rebuild", include_thumbnails=False, include_videos=True)
+
+    def _start_cache_task(
+        self,
+        mode: str,
+        *,
+        include_thumbnails: bool = True,
+        include_videos: bool = True,
+        policy: str | None = None,
+    ) -> None:
+        if self.cache_task is not None:
+            QMessageBox.information(self, "Wallmux", "A cache job is already running.")
+            return
+        self.cache_stats_view.setPlainText("Cache job running...")
+        self.cache_task = CacheMaintenanceTask(
+            mode=mode,
+            config=self.config,
+            items=list(self.items),
+            include_thumbnails=include_thumbnails,
+            include_videos=include_videos,
+            policy=policy,
+        )
+        self.cache_task.signals.finished.connect(self._cache_task_finished)
+        self.cache_task.signals.failed.connect(self._cache_task_failed)
+        self.thread_pool.start(self.cache_task)
+
+    def _cache_task_finished(self, message: str) -> None:
+        self.cache_task = None
+        self.cache_stats_view.setPlainText(message)
+        self.refresh_cache_stats(append=True)
+        self.status.showMessage("Cache job finished", 6000)
+
+    def _cache_task_failed(self, message: str) -> None:
+        self.cache_task = None
+        self.cache_stats_view.setPlainText(message)
         QMessageBox.critical(self, "Wallmux", message)
 
     def save_autoswitch_settings(self) -> None:
@@ -2094,6 +2331,8 @@ class WallmuxWindow(QMainWindow):
         self.refresh_profile_settings()
         self.refresh_backend_settings()
         self.refresh_video_settings()
+        self.refresh_cache_settings()
+        self.refresh_cache_stats()
         self.refresh_autoswitch_settings()
         self.refresh_inhibition_settings()
         self.refresh_notification_settings()
@@ -2513,6 +2752,28 @@ class WallmuxWindow(QMainWindow):
         if isinstance(extra_args, list):
             extra_args = " ".join(str(item) for item in extra_args)
         self.video_extra_args_edit.setText(str(extra_args))
+
+    def refresh_cache_settings(self) -> None:
+        cache = self.config.get("cache", {})
+        self.cache_maintenance_check.setChecked(bool(cache.get("maintenance_enabled", True)))
+        self._set_combo_data(
+            self.cache_cleanup_policy_box,
+            str(cache.get("cleanup_policy", "stale-only")),
+        )
+        self.cache_cleanup_interval_spin.setValue(
+            int(cache.get("cleanup_interval_seconds", 86400))
+        )
+        self.cache_thumbnail_age_spin.setValue(int(cache.get("thumbnail_max_age_days", 60)))
+        self.cache_video_limit_spin.setValue(int(cache.get("optimized_video_max_size_mb", 10240)))
+
+    def refresh_cache_stats(self, *, append: bool = False) -> None:
+        stats_text = format_cache_stats(cache_stats(self.config))
+        if append and self.cache_stats_view.toPlainText():
+            self.cache_stats_view.append("")
+            self.cache_stats_view.append("Updated stats:")
+            self.cache_stats_view.append(stats_text)
+        else:
+            self.cache_stats_view.setPlainText(stats_text)
 
     def _load_image_backend_settings(self, backend: str, backend_config: dict) -> None:
         if backend == "awww":

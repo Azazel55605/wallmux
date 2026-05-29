@@ -119,6 +119,13 @@ crf = 22
 preset = "medium"
 extra_args = ["-pix_fmt", "yuv420p", "-movflags", "+faststart"]
 
+[cache]
+maintenance_enabled = true
+cleanup_interval_seconds = 86400
+cleanup_policy = "stale-only"
+thumbnail_max_age_days = 60
+optimized_video_max_size_mb = 10240
+
 [transitions]
 video_stop_timeout_seconds = 2.0
 kill_video_on_timeout = true

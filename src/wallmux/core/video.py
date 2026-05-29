@@ -341,6 +341,9 @@ def optimized_video_for_source(path: Path, config: dict[str, Any]) -> Path | Non
     )
     metadata_path = optimized_video_metadata_path(candidate)
     if candidate.exists() and metadata_path.exists():
+        from wallmux.core.cache import touch_optimized_video_metadata
+
+        touch_optimized_video_metadata(metadata_path)
         return candidate
     return None
 

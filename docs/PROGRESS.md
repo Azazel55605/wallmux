@@ -236,16 +236,16 @@ Goal: turn the current daily-driver base into a more diagnosable, resilient, and
 
 ### V2.7: Cache Maintenance
 
-- [ ] Add `wallmuxctl cache stats`
-- [ ] Add `wallmuxctl cache clean`
-- [ ] Add `wallmuxctl cache rebuild`
-- [ ] Add `wallmuxctl cache clean --videos` and `wallmuxctl cache clean --thumbnails`
-- [ ] Add optional periodic stale-thumbnail cleanup in `wallmuxd`
-- [ ] Add optimized video cache stats, cleanup, and rebuild controls
-- [ ] Add a GUI cache tab for thumbnails and optimized video derivatives
-- [ ] Show estimated and actual optimized-video cache size before and after optimization jobs
-- [ ] Add config for enabling/disabling cache maintenance, setting cleanup interval, and limiting optimized-video cache size
-- [ ] Add cleanup policies such as stale-only and least-recently-used for optimized video derivatives
+- [x] Add `wallmuxctl cache stats`
+- [x] Add `wallmuxctl cache clean`
+- [x] Add `wallmuxctl cache rebuild`
+- [x] Add `wallmuxctl cache clean --videos` and `wallmuxctl cache clean --thumbnails`
+- [x] Add optional periodic stale-thumbnail cleanup in `wallmuxd`
+- [x] Add optimized video cache stats, cleanup, and rebuild controls
+- [x] Add a GUI cache tab for thumbnails and optimized video derivatives
+- [x] Show estimated and actual optimized-video cache size before and after optimization jobs
+- [x] Add config for enabling/disabling cache maintenance, setting cleanup interval, and limiting optimized-video cache size
+- [x] Add cleanup policies such as stale-only and least-recently-used for optimized video derivatives
 
 ### V2.8: Examples and Recipes
 
@@ -325,6 +325,7 @@ Record notable checks here as the project moves.
 - 2026-05-26: Added single-file V2.6 video optimization execution, writing playback-friendly derivatives into a separate optimized-video cache with JSON sidecar metadata.
 - 2026-05-26: Added CLI progress reporting for video optimization using ffmpeg progress events, with percent, video time, output write rate, and ffmpeg speed.
 - 2026-05-26: Finished V2.6 with bulk video optimization, configurable optimization settings, optional optimized-video preference, resource-mode state, battery/high-load inhibition behavior, and best-effort GPU load detection.
+- 2026-05-29: Finished V2.7 cache maintenance with shared cache stats/clean/rebuild helpers, `wallmuxctl cache` commands, periodic daemon cleanup, age-based thumbnail cleanup, optimized-video stale/LRU cleanup, and a GUI Cache settings tab.
 - 2026-05-26: Added GUI profile configuration for editing profile metadata, folders, backend rules, autoswitch behavior, filters, and profile switch hooks.
 - 2026-05-26: Improved profile GUI setup with folder picker controls and clearer category/subcategory guidance.
 - 2026-05-26: Added profile category import from existing folder structures, creating one profile per child folder such as `green/Anime` and `green/Landscape`.
