@@ -249,13 +249,13 @@ Goal: turn the current daily-driver base into a more diagnosable, resilient, and
 
 ### V2.8: Examples and Recipes
 
-- [ ] Create an `examples/` collection for reusable Wallmux workflows
-- [ ] Add profile hook recipes for pywal, matugen, QuickShell, hyprlock, and notification workflows
-- [ ] Add profile/theme switching examples that demonstrate parent and child profile hooks
-- [ ] Add autoswitch examples for random, name-up, name-down, focused-monitor, and all-monitor setups
-- [ ] Add backend configuration examples for `awww`, `swww`, `hyprpaper`, `mpvpaper`, and fallback chains
-- [ ] Add cache/video optimization examples once V2.6/V2.7 land
-- [ ] Document which examples are generic and which are personal/adapt-to-your-system recipes
+- [x] Create an `examples/` collection for reusable Wallmux workflows
+- [x] Add profile hook recipes for pywal, matugen, QuickShell, hyprlock, and notification workflows
+- [x] Add profile/theme switching examples that demonstrate parent and child profile hooks
+- [x] Add autoswitch examples for random, name-up, name-down, focused-monitor, and all-monitor setups
+- [x] Add backend configuration examples for `awww`, `swww`, `hyprpaper`, `mpvpaper`, and fallback chains
+- [x] Add cache/video optimization examples once V2.6/V2.7 land
+- [x] Document which examples are generic and which are personal/adapt-to-your-system recipes
 
 ### Deferred / Needs More Design
 
@@ -326,6 +326,7 @@ Record notable checks here as the project moves.
 - 2026-05-26: Added CLI progress reporting for video optimization using ffmpeg progress events, with percent, video time, output write rate, and ffmpeg speed.
 - 2026-05-26: Finished V2.6 with bulk video optimization, configurable optimization settings, optional optimized-video preference, resource-mode state, battery/high-load inhibition behavior, and best-effort GPU load detection.
 - 2026-05-29: Finished V2.7 cache maintenance with shared cache stats/clean/rebuild helpers, `wallmuxctl cache` commands, periodic daemon cleanup, age-based thumbnail cleanup, optimized-video stale/LRU cleanup, and a GUI Cache settings tab.
+- 2026-05-29: Finished V2.8 examples and recipes with generic wallpaper/color hooks, an adaptable profile theme hook, profile parent/child examples, autoswitch presets, backend fallback snippets, and cache/video optimization recipes.
 - 2026-05-26: Added GUI profile configuration for editing profile metadata, folders, backend rules, autoswitch behavior, filters, and profile switch hooks.
 - 2026-05-26: Improved profile GUI setup with folder picker controls and clearer category/subcategory guidance.
 - 2026-05-26: Added profile category import from existing folder structures, creating one profile per child folder such as `green/Anime` and `green/Landscape`.

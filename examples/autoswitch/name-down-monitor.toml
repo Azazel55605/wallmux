@@ -1,0 +1,6 @@
+[autoswitch]
+enabled = true
+interval_seconds = 180
+mode = "name-down"
+target = "monitor"
+monitor = "DP-1"

@@ -1,0 +1,15 @@
+[backend_rules]
+image = "hyprpaper"
+gif = "awww"
+video = "mpvpaper"
+
+[backend_fallbacks]
+awww = ["swww"]
+swww = []
+hyprpaper = []
+mpvpaper = []
+gslapper = []
+
+[backends.hyprpaper]
+command = "hyprctl"
+fit_mode = "cover"

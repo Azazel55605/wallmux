@@ -1,0 +1,8 @@
+[backend_rules]
+image = "awww"
+gif = "awww"
+video = "mpvpaper"
+
+[backends.mpvpaper]
+command = "mpvpaper"
+options = "no-config no-audio loop hwdec=auto profile=fast video-sync=display-resample interpolation=no scale=bilinear cscale=bilinear dscale=bilinear panscan=1.0 osd-level=0 msg-level=all=no"

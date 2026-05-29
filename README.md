@@ -419,3 +419,7 @@ hl.exec_cmd("systemctl --user start wallmux.service")
 ```
 
 Packaging assets live in `packaging/`, including a desktop file, icon, systemd user service, and Arch `PKGBUILD` template.
+
+## Examples
+
+Reusable recipes live in `examples/`. They include generic hook snippets, profile layouts, autoswitch presets, backend fallback examples, cache/video optimization commands, and one adapt-to-your-system profile theme hook based on a color/topic desktop workflow.

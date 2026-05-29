@@ -1,0 +1,57 @@
+# Generic profile layout for a color -> topic wallpaper tree.
+#
+# Example folders:
+#
+# ~/Pictures/Wallpapers/green/Anime
+# ~/Pictures/Wallpapers/green/Landscape
+# ~/Pictures/Wallpapers/orange/Anime
+# ~/Pictures/Wallpapers/orange/Landscape
+#
+# Copy relevant entries into ~/.config/wallmux/wallmux-profiles.toml or use the
+# GUI Import Folder Tree action.
+
+active = "green"
+active_category = ""
+active_subcategory = ""
+
+[[entries]]
+name = "green"
+category = ""
+subcategory = ""
+color = "#7ab574"
+wallpaper_dirs = ["~/Pictures/Wallpapers/green"]
+backend_rules = {}
+autoswitch_mode = "random"
+filter_query = ""
+filter_types = []
+before_switch = []
+after_switch = []
+include_parent_hooks = false
+
+[[entries]]
+name = "Anime"
+category = "green"
+subcategory = "Anime"
+color = "#7ab574"
+wallpaper_dirs = ["~/Pictures/Wallpapers/green/Anime"]
+backend_rules = {}
+autoswitch_mode = "random"
+filter_query = ""
+filter_types = []
+before_switch = []
+after_switch = []
+include_parent_hooks = true
+
+[[entries]]
+name = "Landscape"
+category = "green"
+subcategory = "Landscape"
+color = "#7ab574"
+wallpaper_dirs = ["~/Pictures/Wallpapers/green/Landscape"]
+backend_rules = {}
+autoswitch_mode = "name-up"
+filter_query = ""
+filter_types = ["image"]
+before_switch = []
+after_switch = []
+include_parent_hooks = true

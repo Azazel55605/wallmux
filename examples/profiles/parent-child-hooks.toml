@@ -1,0 +1,40 @@
+# Generic profile hook example.
+#
+# Parent hook runs first when a child has include_parent_hooks = true.
+# The child hook can then do topic-specific work.
+
+active = "Anime"
+active_category = "green"
+active_subcategory = "Anime"
+
+[[entries]]
+name = "green"
+category = ""
+subcategory = ""
+color = "#7ab574"
+wallpaper_dirs = ["~/Pictures/Wallpapers/green"]
+backend_rules = {}
+autoswitch_mode = "random"
+filter_query = ""
+filter_types = []
+before_switch = []
+after_switch = [
+  "~/.config/wallmux/hooks/profile-theme-hook.sh '{category}' '{subcategory}' '{profile}'"
+]
+include_parent_hooks = false
+
+[[entries]]
+name = "Anime"
+category = "green"
+subcategory = "Anime"
+color = "#7ab574"
+wallpaper_dirs = ["~/Pictures/Wallpapers/green/Anime"]
+backend_rules = {}
+autoswitch_mode = "random"
+filter_query = ""
+filter_types = []
+before_switch = []
+after_switch = [
+  "notify-send -a Wallmux -i wallmux-gui 'Profile topic' '{label}'"
+]
+include_parent_hooks = true

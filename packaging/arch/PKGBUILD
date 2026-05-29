@@ -1,6 +1,6 @@
 # Maintainer: Wallmux contributors
 pkgname=wallmux
-pkgver=0.2.6
+pkgver=0.2.8
 pkgrel=1
 pkgdesc="Hyprland-first wallpaper manager and backend orchestrator"
 arch=("any")
