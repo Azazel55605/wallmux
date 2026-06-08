@@ -46,8 +46,8 @@ def sample_config(tmp_path: Path) -> dict:
     config = load_config(tmp_path / "config.toml")
     config["hooks"]["before_set"] = []
     config["hooks"]["after_set"] = []
-    config["transitions"]["basic"]["video_to_image_settle_seconds"] = 0.0
     config["transitions"]["basic"]["video_start_settle_seconds"] = 0.0
+    config["transitions"]["video_bridge"]["poster_settle_seconds"] = 0.0
     return config
 
 
@@ -395,7 +395,7 @@ def test_set_all_video_to_image_stops_videos_together(
         return True
 
     monkeypatch.setattr("wallmux.core.wallpaper.pid_is_alive", lambda pid: True)
-    monkeypatch.setattr("wallmux.core.wallpaper.terminate_pid", terminate)
+    monkeypatch.setattr("wallmux.core.wallpaper.terminate_pid_async", terminate)
     config = sample_config(tmp_path)
 
     def monitor_provider():
@@ -475,7 +475,7 @@ def test_replaces_tracked_video_process(tmp_path: Path, monkeypatch) -> None:
         return True
 
     monkeypatch.setattr("wallmux.core.wallpaper.pid_is_alive", lambda pid: True)
-    monkeypatch.setattr("wallmux.core.wallpaper.terminate_pid", terminate)
+    monkeypatch.setattr("wallmux.core.wallpaper.terminate_pid_async", terminate)
 
     config = sample_config(tmp_path)
     first = set_wallpaper(first_video, "DP-1", config=config, runner=runner, state_path=state_path)
@@ -509,7 +509,7 @@ def test_video_to_image_stops_tracked_video_before_image(tmp_path: Path, monkeyp
         return True
 
     monkeypatch.setattr("wallmux.core.wallpaper.pid_is_alive", lambda pid: True)
-    monkeypatch.setattr("wallmux.core.wallpaper.terminate_pid", terminate)
+    monkeypatch.setattr("wallmux.core.wallpaper.terminate_pid_async", terminate)
 
     config = sample_config(tmp_path)
     set_wallpaper(video, "DP-1", config=config, runner=runner, state_path=state_path)
@@ -521,7 +521,7 @@ def test_video_to_image_stops_tracked_video_before_image(tmp_path: Path, monkeyp
     assert load_state(state_path).monitors["DP-1"].pid is None
 
 
-def test_basic_video_to_image_sets_image_before_stopping_video(
+def test_video_to_image_stops_video_before_native_image_transition(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -544,43 +544,76 @@ def test_basic_video_to_image_sets_image_before_stopping_video(
         return True
 
     monkeypatch.setattr("wallmux.core.wallpaper.pid_is_alive", lambda pid: True)
-    monkeypatch.setattr("wallmux.core.wallpaper.terminate_pid", terminate)
+    monkeypatch.setattr("wallmux.core.wallpaper.terminate_pid_async", terminate)
 
     config = sample_config(tmp_path)
     set_wallpaper(video, "DP-1", config=config, runner=runner, state_path=state_path)
     set_wallpaper(image, "DP-1", config=config, runner=runner, state_path=state_path)
 
-    assert events == ["run", "terminate"]
+    assert events == ["terminate", "run"]
 
 
-def test_video_to_image_waits_for_image_handoff_before_stopping_video(
+def test_video_poster_is_set_before_playback_and_not_saved_as_state(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     runner = FakeRunner()
     state_path = tmp_path / "state.json"
     video = tmp_path / "one.mp4"
-    image = tmp_path / "two.png"
+    poster = tmp_path / "poster.jpg"
     video.write_bytes(b"")
-    image.write_bytes(b"")
+    poster.write_bytes(b"poster")
+    monkeypatch.setattr("wallmux.core.wallpaper.ensure_video_poster", lambda *_args: poster)
+    config = sample_config(tmp_path)
+
+    result = set_wallpaper(video, "DP-1", config=config, runner=runner, state_path=state_path)
+
+    assert runner.runs[0][0:3] == ["awww", "img", str(poster)]
+    assert runner.starts[0][-2:] == ["DP-1", str(video)]
+    assert result.file == video
+    assert load_state(state_path).monitors["DP-1"].file == str(video)
+
+
+def test_video_to_video_reveals_next_poster_between_processes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     events: list[str] = []
 
-    monkeypatch.setattr("wallmux.core.wallpaper.pid_is_alive", lambda pid: True)
+    class EventRunner(FakeRunner):
+        def run(self, command: list[str]) -> None:
+            events.append(f"poster:{Path(command[2]).name}")
+            super().run(command)
+
+        def start(self, command: list[str]) -> int:
+            events.append(f"start:{Path(command[-1]).name}")
+            return super().start(command)
+
+    runner = EventRunner()
+    state_path = tmp_path / "state.json"
+    first_video = tmp_path / "one.mp4"
+    second_video = tmp_path / "two.mp4"
+    first_poster = tmp_path / "one.jpg"
+    second_poster = tmp_path / "two.jpg"
+    for path in (first_video, second_video, first_poster, second_poster):
+        path.write_bytes(b"content")
+
+    monkeypatch.setattr("wallmux.core.wallpaper.pid_is_alive", lambda _pid: True)
     monkeypatch.setattr(
-        "wallmux.core.wallpaper.time.sleep",
-        lambda seconds: events.append(f"sleep:{seconds}"),
+        "wallmux.core.wallpaper.ensure_video_poster",
+        lambda path, _timestamp: first_poster if path == first_video else second_poster,
     )
     monkeypatch.setattr(
-        "wallmux.core.wallpaper.terminate_pid",
+        "wallmux.core.wallpaper.terminate_pid_async",
         lambda *_args, **_kwargs: events.append("terminate") or True,
     )
+
     config = sample_config(tmp_path)
-    config["transitions"]["basic"]["video_to_image_settle_seconds"] = 0.9
+    set_wallpaper(first_video, "DP-1", config=config, runner=runner, state_path=state_path)
+    events.clear()
+    set_wallpaper(second_video, "DP-1", config=config, runner=runner, state_path=state_path)
 
-    set_wallpaper(video, "DP-1", config=config, runner=runner, state_path=state_path)
-    set_wallpaper(image, "DP-1", config=config, runner=runner, state_path=state_path)
-
-    assert events == ["sleep:0.9", "terminate"]
+    assert events == ["poster:two.jpg", "terminate", "start:two.mp4"]
 
 
 def test_video_start_waits_before_revealing_transition(
@@ -620,7 +653,10 @@ def test_grouped_video_to_image_runs_one_joined_transition(
     config = sample_config(tmp_path)
     calls = []
     monkeypatch.setattr("wallmux.core.wallpaper.pid_is_alive", lambda pid: True)
-    monkeypatch.setattr("wallmux.core.wallpaper.terminate_pid", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        "wallmux.core.wallpaper.terminate_pid_async",
+        lambda *_args, **_kwargs: True,
+    )
     monkeypatch.setattr(
         "wallmux.core.wallpaper.run_transition_stage",
         lambda stage, _config, context: calls.append((stage, context)),
@@ -659,7 +695,7 @@ def test_image_to_image_keeps_native_backend_transition(tmp_path: Path, monkeypa
     first_image.write_bytes(b"")
     second_image.write_bytes(b"")
     terminated: list[int] = []
-    monkeypatch.setattr("wallmux.core.wallpaper.terminate_pid", terminated.append)
+    monkeypatch.setattr("wallmux.core.wallpaper.terminate_pid_async", terminated.append)
 
     config = sample_config(tmp_path)
     set_wallpaper(first_image, "DP-1", config=config, runner=runner, state_path=state_path)

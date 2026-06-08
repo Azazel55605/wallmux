@@ -171,6 +171,10 @@ video_stop_timeout_seconds = 2.0
 kill_video_on_timeout = true
 ```
 
+Wallpaper transitions request video shutdown without blocking the next backend
+command. The stop timeout and optional force-kill are supervised in the
+background; explicit daemon stop commands still wait for completion.
+
 The `All monitors` target can apply wallpapers either together or one by one:
 
 ```toml
@@ -387,10 +391,18 @@ Wallmux also ships with basic transition orchestration enabled by default:
 ```toml
 [transitions.basic]
 enabled = true
-set_image_before_stopping_video = true
+video_start_settle_seconds = 0.6
+
+[transitions.video_bridge]
+enabled = true
+poster_timestamp_seconds = 0.0
+poster_settle_seconds = 0.8
 ```
 
-For `video -> image`, this sets the image backend first and then stops the old video processes, reducing visible blank gaps without requiring a custom overlay.
+Wallmux keeps a full-resolution cached poster beneath video playback. For
+`video -> image`, it stops the video first and lets the image backend use its
+native poster-to-image transition. The same poster bridge avoids a blank
+background while changing between videos.
 
 ## Development
 

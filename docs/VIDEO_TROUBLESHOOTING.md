@@ -24,17 +24,31 @@ video_optimization = true
 
 ## Video to Image Handoff
 
-Wallmux sets the next image underneath mpvpaper, waits briefly for the image backend transition to finish, and then stops mpvpaper. This prevents the previously displayed image from flashing between the video and the next image.
+Wallmux keeps a cached full-resolution poster beneath mpvpaper. When switching
+from video to image, it stops mpvpaper first and lets the image backend
+transition natively from that poster to the destination image. This prevents
+the wallpaper shown before the video from flashing back into view.
+
+Transition-time mpvpaper shutdown is non-blocking. Wallmux requests shutdown,
+immediately starts the next backend operation, and supervises the configured
+stop timeout in the background.
 
 ```toml
 [transitions.basic]
 enabled = true
-set_image_before_stopping_video = true
-video_to_image_settle_seconds = 0.9
 video_start_settle_seconds = 0.6
+
+[transitions.video_bridge]
+enabled = true
+poster_timestamp_seconds = 0.0
+poster_settle_seconds = 0.8
 ```
 
-Increase the settle time if your `awww` or `swww` transition is longer. A true fade of the mpvpaper layer itself still requires a compositor or layer-shell overlay helper because mpvpaper/libmpv does not expose layer opacity control.
+The poster is also prepared before image-to-video and video-to-video switches.
+It is an internal fallback layer and does not replace the selected video in
+Wallmux state or run wallpaper hooks. A true fade of the mpvpaper layer itself
+still requires a compositor or layer-shell overlay helper because
+mpvpaper/libmpv does not expose layer opacity control.
 
 `video_start_settle_seconds` delays an overlay's reveal while a newly started
 video backend creates its layer and renders its first frame.

@@ -20,6 +20,10 @@ def test_cache_stats_counts_thumbnail_and_video_files(monkeypatch, tmp_path: Pat
     (videos / "clip.mp4").write_bytes(b"video")
 
     monkeypatch.setattr("wallmux.core.cache.thumbnail_cache_dir", lambda: thumbnails)
+    monkeypatch.setattr(
+        "wallmux.core.cache.video_poster_cache_dir",
+        lambda: tmp_path / "posters",
+    )
 
     stats = cache_stats(sample_cache_config(videos))
 
@@ -41,6 +45,10 @@ def test_cache_clean_removes_age_stale_thumbnails(monkeypatch, tmp_path: Path) -
     os.utime(stale, (old_time, old_time))
 
     monkeypatch.setattr("wallmux.core.cache.thumbnail_cache_dir", lambda: thumbnails)
+    monkeypatch.setattr(
+        "wallmux.core.cache.video_poster_cache_dir",
+        lambda: tmp_path / "posters",
+    )
 
     result = clean_cache(
         sample_cache_config(videos, thumbnail_max_age_days=1),

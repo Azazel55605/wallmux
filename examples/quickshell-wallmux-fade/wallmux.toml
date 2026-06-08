@@ -4,9 +4,12 @@ quickshell_command = "~/.config/quickshell/wallmux-fade/wallmux-fade.sh {stage} 
 quickshell_transitions = ["image_to_video", "video_to_image", "video_to_video"]
 timeout_seconds = 2.0
 
-# The QuickShell overlay hides the backend handoff, so the basic delay can be short.
+# Keep the overlay opaque while mpvpaper creates its layer.
 [transitions.basic]
 enabled = true
-set_image_before_stopping_video = true
-video_to_image_settle_seconds = 0.1
 video_start_settle_seconds = 0.8
+
+[transitions.video_bridge]
+enabled = true
+poster_timestamp_seconds = 0.0
+poster_settle_seconds = 0.8

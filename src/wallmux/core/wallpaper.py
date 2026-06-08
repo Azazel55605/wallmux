@@ -23,17 +23,17 @@ from wallmux.core.config import load_config
 from wallmux.core.hooks import HookContext, run_hook_stage
 from wallmux.core.mime import WallpaperType, detect_wallpaper_type
 from wallmux.core.monitors import Monitor, get_focused_monitor, list_monitors
-from wallmux.core.process import pid_is_alive, terminate_pid
+from wallmux.core.process import pid_is_alive, terminate_pid_async
 from wallmux.core.state import WallpaperEntry, load_state, save_state
 from wallmux.core.transition_effects import TransitionContext, run_transition_stage
 from wallmux.core.transitions import TransitionKind, plan_transition
 from wallmux.core.video import optimized_video_for_source
+from wallmux.core.video_posters import ensure_video_poster
 
 STATE_LOCK = threading.Lock()
 APP_NAME = "wallmux"
 Command = list[str]
 CommandPlan = Command | list[Command]
-IMAGE_BACKENDS = {"awww", "swww", "hyprpaper"}
 GROUPED_OUTPUT_BACKENDS = {"awww", "swww"}
 
 
@@ -183,21 +183,16 @@ def _set_wallpaper_with_backend(
     )
     run_transition_stage("before", config, transition_context)
 
-    stop_video_after_image_set = _should_stop_video_after_image_set(
-        config,
-        transition.kind,
-        backend_name,
-        previous.pid if previous else None,
-    )
+    if wallpaper_type is WallpaperType.VIDEO:
+        _prepare_video_poster(resolved_file, monitor, config, runner)
 
     if (
         previous
         and previous.pid
         and transition.stop_previous_video
-        and not stop_video_after_image_set
     ):
         transitions_config = config.get("transitions", {})
-        terminate_pid(
+        terminate_pid_async(
             previous.pid,
             float(transitions_config.get("video_stop_timeout_seconds", 2.0)),
             kill_on_timeout=bool(transitions_config.get("kill_video_on_timeout", True)),
@@ -206,15 +201,6 @@ def _set_wallpaper_with_backend(
 
     pid = _execute(command, backend_name, wallpaper_type, runner)
     _wait_for_video_start_handoff(config, wallpaper_type, backend_name)
-    if previous and previous.pid and stop_video_after_image_set:
-        _wait_for_video_to_image_handoff(config)
-        transitions_config = config.get("transitions", {})
-        terminate_pid(
-            previous.pid,
-            float(transitions_config.get("video_stop_timeout_seconds", 2.0)),
-            kill_on_timeout=bool(transitions_config.get("kill_video_on_timeout", True)),
-        )
-        previous.pid = None
     with STATE_LOCK:
         state = load_state(state_path)
         state.monitors[monitor] = WallpaperEntry(
@@ -501,14 +487,12 @@ def _set_image_wallpaper_for_all_outputs(
     )
     run_transition_stage("before", config, transition_context)
 
-    stop_videos_after_image_set = bool(pids_to_stop) and _basic_image_bridge_enabled(config)
     transitions_config = config.get("transitions", {})
-    if not stop_videos_after_image_set:
-        _terminate_pids(
-            pids_to_stop,
-            timeout_seconds=float(transitions_config.get("video_stop_timeout_seconds", 2.0)),
-            kill_on_timeout=bool(transitions_config.get("kill_video_on_timeout", True)),
-        )
+    _terminate_pids(
+        pids_to_stop,
+        timeout_seconds=float(transitions_config.get("video_stop_timeout_seconds", 2.0)),
+        kill_on_timeout=bool(transitions_config.get("kill_video_on_timeout", True)),
+    )
     candidates = _backend_candidates(
         backend_name,
         wallpaper_type,
@@ -537,14 +521,6 @@ def _set_image_wallpaper_for_all_outputs(
 
     if command is None:
         raise WallmuxError(f"no backend candidates for {wallpaper_type.value} wallpaper")
-
-    if stop_videos_after_image_set:
-        _wait_for_video_to_image_handoff(config)
-        _terminate_pids(
-            pids_to_stop,
-            timeout_seconds=float(transitions_config.get("video_stop_timeout_seconds", 2.0)),
-            kill_on_timeout=bool(transitions_config.get("kill_video_on_timeout", True)),
-        )
 
     with STATE_LOCK:
         state = load_state(state_path)
@@ -587,31 +563,49 @@ def _monitor_name(monitor: Monitor | str) -> str:
     return monitor.name
 
 
-def _should_stop_video_after_image_set(
+def _prepare_video_poster(
+    video: Path,
+    monitor: str,
     config: dict,
-    transition: TransitionKind,
-    backend_name: str,
-    previous_pid: int | None,
-) -> bool:
-    if not previous_pid:
-        return False
-    if transition is not TransitionKind.VIDEO_TO_IMAGE:
-        return False
-    if backend_name not in IMAGE_BACKENDS:
-        return False
-    return _basic_image_bridge_enabled(config)
+    runner: CommandRunner,
+) -> None:
+    transitions = config.get("transitions", {})
+    basic = transitions.get("basic", {})
+    poster_config = transitions.get("video_bridge", {})
+    if not bool(basic.get("enabled", True)) or not bool(poster_config.get("enabled", True)):
+        return
+
+    timestamp = max(0.0, float(poster_config.get("poster_timestamp_seconds", 0.0)))
+    poster = ensure_video_poster(video, timestamp)
+    if poster is None:
+        return
+
+    image_backend = route_wallpaper(WallpaperType.IMAGE, config.get("backend_rules", {}))
+    if image_backend not in compatible_backends(WallpaperType.IMAGE):
+        return
+    candidates = _backend_candidates(
+        image_backend,
+        WallpaperType.IMAGE,
+        config,
+        allow_fallbacks=True,
+    )
+    for index, candidate in enumerate(candidates):
+        command = build_backend(candidate, config).build_set_command(poster, monitor)
+        try:
+            _run_foreground(command, runner)
+            _wait_for_video_poster_handoff(config, candidate)
+            return
+        except WallmuxError as error:
+            if index < len(candidates) - 1:
+                _log_backend_fallback(candidate, candidates[index + 1], error)
+    return
 
 
-def _basic_image_bridge_enabled(config: dict) -> bool:
-    basic_config = config.get("transitions", {}).get("basic", {})
-    if not bool(basic_config.get("enabled", True)):
-        return False
-    return bool(basic_config.get("set_image_before_stopping_video", True))
-
-
-def _wait_for_video_to_image_handoff(config: dict) -> None:
-    basic_config = config.get("transitions", {}).get("basic", {})
-    delay = max(0.0, float(basic_config.get("video_to_image_settle_seconds", 0.9)))
+def _wait_for_video_poster_handoff(config: dict, image_backend: str) -> None:
+    if image_backend == "hyprpaper":
+        return
+    poster_config = config.get("transitions", {}).get("video_bridge", {})
+    delay = max(0.0, float(poster_config.get("poster_settle_seconds", 0.8)))
     if delay:
         time.sleep(delay)
 
@@ -665,7 +659,7 @@ def _terminate_pids(
     if not pids:
         return
     if len(pids) == 1:
-        terminate_pid(
+        terminate_pid_async(
             pids[0],
             timeout_seconds,
             kill_on_timeout=kill_on_timeout,
@@ -675,7 +669,7 @@ def _terminate_pids(
     with ThreadPoolExecutor(max_workers=len(pids)) as executor:
         futures = [
             executor.submit(
-                terminate_pid,
+                terminate_pid_async,
                 pid,
                 timeout_seconds,
                 kill_on_timeout=kill_on_timeout,

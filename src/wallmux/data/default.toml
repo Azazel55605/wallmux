@@ -138,9 +138,12 @@ kill_video_on_timeout = true
 
 [transitions.basic]
 enabled = true
-set_image_before_stopping_video = true
-video_to_image_settle_seconds = 0.9
 video_start_settle_seconds = 0.6
+
+[transitions.video_bridge]
+enabled = true
+poster_timestamp_seconds = 0.0
+poster_settle_seconds = 0.8
 
 [transitions.effects]
 fade_overlay = false

@@ -65,8 +65,9 @@ waits until the desktop is fully covered before switching.
 
 `video_start_settle_seconds` keeps the overlay opaque while mpvpaper creates its
 layer and renders the first frame. Increase it if the fade finishes before the
-video appears. `video_to_image_settle_seconds` gives the replacement image a
-short moment to settle before Wallmux removes mpvpaper.
+video appears. The video poster bridge keeps a full-resolution frame beneath
+mpvpaper, so stopping playback reveals that frame before the image backend
+starts its native transition.
 
 The overlay uses an empty input region and does not reserve screen space, so it
 does not intercept clicks or affect window layout.

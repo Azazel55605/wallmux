@@ -18,6 +18,7 @@ from wallmux.core.video import (
     optimize_video,
     optimized_video_metadata_path,
 )
+from wallmux.core.video_posters import video_poster_cache_dir
 
 
 @dataclass(frozen=True)
@@ -38,23 +39,32 @@ class CacheSectionStats:
 @dataclass(frozen=True)
 class CacheStats:
     thumbnails: CacheSectionStats
+    video_posters: CacheSectionStats
     optimized_videos: CacheSectionStats
 
     @property
     def files(self) -> int:
-        return self.thumbnails.files + self.optimized_videos.files
+        return self.thumbnails.files + self.video_posters.files + self.optimized_videos.files
 
     @property
     def bytes(self) -> int:
-        return self.thumbnails.bytes + self.optimized_videos.bytes
+        return self.thumbnails.bytes + self.video_posters.bytes + self.optimized_videos.bytes
 
     @property
     def stale_files(self) -> int:
-        return self.thumbnails.stale_files + self.optimized_videos.stale_files
+        return (
+            self.thumbnails.stale_files
+            + self.video_posters.stale_files
+            + self.optimized_videos.stale_files
+        )
 
     @property
     def stale_bytes(self) -> int:
-        return self.thumbnails.stale_bytes + self.optimized_videos.stale_bytes
+        return (
+            self.thumbnails.stale_bytes
+            + self.video_posters.stale_bytes
+            + self.optimized_videos.stale_bytes
+        )
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -63,6 +73,7 @@ class CacheStats:
             "stale_files": self.stale_files,
             "stale_bytes": self.stale_bytes,
             "thumbnails": self.thumbnails.as_dict(),
+            "video_posters": self.video_posters.as_dict(),
             "optimized_videos": self.optimized_videos.as_dict(),
         }
 
@@ -92,6 +103,7 @@ def cache_stats(config: dict[str, Any] | None = None) -> CacheStats:
     active_config = config or {}
     return CacheStats(
         thumbnails=_thumbnail_stats(active_config),
+        video_posters=_video_poster_stats(active_config),
         optimized_videos=_optimized_video_stats(active_config),
     )
 
@@ -110,6 +122,10 @@ def clean_cache(
 
     if include_thumbnails:
         result = _clean_thumbnails(config, selected_policy)
+        removed_files += result.removed_files
+        removed_bytes += result.removed_bytes
+        errors.extend(result.errors)
+        result = _clean_video_posters(config, selected_policy)
         removed_files += result.removed_files
         removed_bytes += result.removed_bytes
         errors.extend(result.errors)
@@ -199,6 +215,8 @@ def format_cache_stats(stats: CacheStats) -> str:
             "",
             _format_section_stats(stats.thumbnails),
             "",
+            _format_section_stats(stats.video_posters),
+            "",
             _format_section_stats(stats.optimized_videos),
         ]
     )
@@ -278,6 +296,10 @@ def _optimized_video_stats(config: dict[str, Any]) -> CacheSectionStats:
     return CacheSectionStats("optimized_videos", path, files, total, stale_files, stale_total)
 
 
+def _video_poster_stats(config: dict[str, Any]) -> CacheSectionStats:
+    return _age_based_stats("video_posters", video_poster_cache_dir(), config)
+
+
 def _clean_thumbnails(config: dict[str, Any], policy: str) -> CacheCleanResult:
     errors: list[str] = []
     removed_files = 0
@@ -286,6 +308,23 @@ def _clean_thumbnails(config: dict[str, Any], policy: str) -> CacheCleanResult:
         policy = "stale-only"
 
     for file in _iter_files(thumbnail_cache_dir()):
+        if policy != "all" and not _is_stale_thumbnail(file, config):
+            continue
+        result = _remove_file(file)
+        removed_files += result.removed_files
+        removed_bytes += result.removed_bytes
+        errors.extend(result.errors)
+    return CacheCleanResult(removed_files, removed_bytes, tuple(errors))
+
+
+def _clean_video_posters(config: dict[str, Any], policy: str) -> CacheCleanResult:
+    errors: list[str] = []
+    removed_files = 0
+    removed_bytes = 0
+    if policy == "lru":
+        policy = "stale-only"
+
+    for file in _iter_files(video_poster_cache_dir()):
         if policy != "all" and not _is_stale_thumbnail(file, config):
             continue
         result = _remove_file(file)
@@ -429,6 +468,23 @@ def _thumbnail_max_age_seconds(config: dict[str, Any]) -> float | None:
     if days <= 0:
         return None
     return days * 24 * 60 * 60
+
+
+def _age_based_stats(name: str, path: Path, config: dict[str, Any]) -> CacheSectionStats:
+    max_age_seconds = _thumbnail_max_age_seconds(config)
+    now = datetime.now(UTC).timestamp()
+    files = 0
+    total = 0
+    stale_files = 0
+    stale_total = 0
+    for file in _iter_files(path):
+        size = _file_size(file)
+        files += 1
+        total += size
+        if max_age_seconds is not None and now - file.stat().st_mtime > max_age_seconds:
+            stale_files += 1
+            stale_total += size
+    return CacheSectionStats(name, path, files, total, stale_files, stale_total)
 
 
 def _format_section_stats(stats: CacheSectionStats) -> str:

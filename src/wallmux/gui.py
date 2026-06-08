@@ -1440,11 +1440,15 @@ class WallmuxWindow(QMainWindow):
 
         transition_form = QFormLayout()
         self.basic_transitions_check = QCheckBox("Basic transitions")
-        self.basic_image_bridge_check = QCheckBox("Set image before stopping video")
-        self.video_to_image_settle_spin = QDoubleSpinBox()
-        self.video_to_image_settle_spin.setRange(0.0, 10.0)
-        self.video_to_image_settle_spin.setSingleStep(0.1)
-        self.video_to_image_settle_spin.setDecimals(1)
+        self.video_poster_bridge_check = QCheckBox("Keep video poster beneath playback")
+        self.video_poster_timestamp_spin = QDoubleSpinBox()
+        self.video_poster_timestamp_spin.setRange(0.0, 60.0)
+        self.video_poster_timestamp_spin.setSingleStep(0.1)
+        self.video_poster_timestamp_spin.setDecimals(1)
+        self.video_poster_settle_spin = QDoubleSpinBox()
+        self.video_poster_settle_spin.setRange(0.0, 10.0)
+        self.video_poster_settle_spin.setSingleStep(0.1)
+        self.video_poster_settle_spin.setDecimals(1)
         self.video_start_settle_spin = QDoubleSpinBox()
         self.video_start_settle_spin.setRange(0.0, 10.0)
         self.video_start_settle_spin.setSingleStep(0.1)
@@ -1465,13 +1469,20 @@ class WallmuxWindow(QMainWindow):
         self.transition_effect_timeout_spin.setDecimals(1)
 
         transition_form.addRow("", self.basic_transitions_check)
-        transition_form.addRow("", self.basic_image_bridge_check)
+        transition_form.addRow("", self.video_poster_bridge_check)
         transition_form.addRow(
             _form_label(
-                "Video to Image Settle",
-                "Seconds to keep the video visible while the next image finishes loading.",
+                "Poster Timestamp",
+                "Video timestamp used for the full-resolution image kept beneath playback.",
             ),
-            self.video_to_image_settle_spin,
+            self.video_poster_timestamp_spin,
+        )
+        transition_form.addRow(
+            _form_label(
+                "Poster Settle",
+                "Seconds to let awww or swww finish switching to the poster before video starts.",
+            ),
+            self.video_poster_settle_spin,
         )
         transition_form.addRow(
             _form_label(
@@ -3062,13 +3073,17 @@ class WallmuxWindow(QMainWindow):
     def refresh_transition_settings(self) -> None:
         transitions = self.config.get("transitions", {})
         basic = transitions.get("basic", {})
+        video_bridge = transitions.get("video_bridge", {})
         effects = transitions.get("effects", {})
         self.basic_transitions_check.setChecked(bool(basic.get("enabled", True)))
-        self.basic_image_bridge_check.setChecked(
-            bool(basic.get("set_image_before_stopping_video", True))
+        self.video_poster_bridge_check.setChecked(
+            bool(video_bridge.get("enabled", True))
         )
-        self.video_to_image_settle_spin.setValue(
-            float(basic.get("video_to_image_settle_seconds", 0.9))
+        self.video_poster_timestamp_spin.setValue(
+            float(video_bridge.get("poster_timestamp_seconds", 0.0))
+        )
+        self.video_poster_settle_spin.setValue(
+            float(video_bridge.get("poster_settle_seconds", 0.8))
         )
         self.video_start_settle_spin.setValue(
             float(basic.get("video_start_settle_seconds", 0.6))
@@ -3101,9 +3116,12 @@ class WallmuxWindow(QMainWindow):
         transitions = self.config.setdefault("transitions", {})
         transitions["basic"] = {
             "enabled": self.basic_transitions_check.isChecked(),
-            "set_image_before_stopping_video": self.basic_image_bridge_check.isChecked(),
-            "video_to_image_settle_seconds": self.video_to_image_settle_spin.value(),
             "video_start_settle_seconds": self.video_start_settle_spin.value(),
+        }
+        transitions["video_bridge"] = {
+            "enabled": self.video_poster_bridge_check.isChecked(),
+            "poster_timestamp_seconds": self.video_poster_timestamp_spin.value(),
+            "poster_settle_seconds": self.video_poster_settle_spin.value(),
         }
         transitions["effects"] = {
             "fade_overlay": self.fade_overlay_check.isChecked(),
