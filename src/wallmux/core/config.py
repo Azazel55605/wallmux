@@ -18,6 +18,11 @@ except ImportError:
 APP_NAME = "wallmux"
 DEFAULT_CONFIG_RESOURCE = "wallmux.data.default.toml"
 OLD_MPV_DEFAULT_OPTIONS = "no-audio loop hwdec=auto"
+PREVIOUS_MPV_DEFAULT_OPTIONS = (
+    "no-config no-audio loop hwdec=auto profile=fast "
+    "video-sync=display-resample interpolation=no scale=bilinear "
+    "cscale=bilinear dscale=bilinear panscan=1.0 osd-level=0 msg-level=all=no"
+)
 PROFILES_CONFIG_NAME = "wallmux-profiles.toml"
 DEFAULT_PROFILES_CONFIG: dict[str, Any] = {
     "active": "",
@@ -86,13 +91,32 @@ def apply_config_migrations(
     migrated = _copy_mapping(user_config)
     mpvpaper = migrated.get("backends", {}).get("mpvpaper", {})
     default_mpvpaper = default_config.get("backends", {}).get("mpvpaper", {})
-    if mpvpaper.get("options") == OLD_MPV_DEFAULT_OPTIONS:
+    if mpvpaper.get("options") in {OLD_MPV_DEFAULT_OPTIONS, PREVIOUS_MPV_DEFAULT_OPTIONS}:
         mpvpaper["options"] = default_mpvpaper.get("options", OLD_MPV_DEFAULT_OPTIONS)
+    if isinstance(mpvpaper, dict) and "hardware_decoding" not in mpvpaper:
+        options, mode = _migrate_mpvpaper_hardware_decoding(str(mpvpaper.get("options", "")))
+        mpvpaper["options"] = options
+        mpvpaper["hardware_decoding"] = mode
     video_optimization = migrated.get("video_optimization", {})
     if isinstance(video_optimization, Mapping) and "auto_optimize" not in video_optimization:
         video_optimization["auto_optimize"] = True
         video_optimization["prefer_optimized"] = True
     return migrated
+
+
+def _migrate_mpvpaper_hardware_decoding(options: str) -> tuple[str, str]:
+    mode = "automatic"
+    kept: list[str] = []
+    for token in options.split():
+        if not token.startswith("hwdec="):
+            kept.append(token)
+            continue
+        value = token.partition("=")[2]
+        if value == "no":
+            mode = "software"
+        elif value not in {"auto-safe", ""}:
+            mode = "hardware"
+    return " ".join(kept), mode
 
 
 def default_config_text() -> str:

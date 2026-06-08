@@ -393,6 +393,13 @@ def main(argv: list[str] | None = None) -> int:
             f"high_load={resource_mode.get('high_load', False)} "
             f"high_load_behavior={resource_mode.get('high_load_behavior', 'keep')}"
         )
+        video_optimization = daemon.get("video_optimization", {})
+        print(
+            "video_optimization: "
+            f"running={video_optimization.get('running', 0)} "
+            f"queued={video_optimization.get('queued', 0)} "
+            f"max_concurrent={video_optimization.get('max_concurrent_jobs', 2)}"
+        )
         if daemon.get("last_error"):
             last_error = daemon["last_error"]
             print(f"last_error: {last_error.get('message')}: {last_error.get('error')}")

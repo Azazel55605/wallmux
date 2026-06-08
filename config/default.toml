@@ -50,7 +50,8 @@ fit_mode = "cover"
 
 [backends.mpvpaper]
 command = "mpvpaper"
-options = "no-config no-audio loop hwdec=auto profile=fast video-sync=display-resample interpolation=no scale=bilinear cscale=bilinear dscale=bilinear panscan=1.0 osd-level=0 msg-level=all=no"
+options = "no-config no-audio loop-file=inf keep-open=yes profile=fast video-sync=audio interpolation=no scale=bilinear cscale=bilinear dscale=bilinear panscan=1.0 osd-level=0 no-osc no-osd-bar really-quiet"
+hardware_decoding = "automatic"
 
 [backends.gslapper]
 command = "gslapper"
@@ -93,6 +94,7 @@ title_patterns = []
 enabled = true
 switched_wallpaper = true
 switching_failed = true
+video_optimization = true
 command = "notify-send"
 app_name = "Wallmux"
 icon = "wallmux-gui"
@@ -101,6 +103,33 @@ desktop_entry = "wallmux-gui"
 [daemon]
 startup_restore_retry_seconds = 5.0
 
+[video_optimization]
+enabled = true
+auto_optimize = true
+profile = "balanced"
+cache_dir = ""
+prefer_optimized = true
+bulk_warning = true
+max_concurrent_jobs = 2
+library_scan_interval_seconds = 30
+codec = "libx264"
+codec_names = ["h264"]
+container = "mp4"
+extension = ".mp4"
+max_width = 2560
+max_height = 1440
+max_bit_rate = 45000000
+crf = 22
+preset = "medium"
+extra_args = ["-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+
+[cache]
+maintenance_enabled = true
+cleanup_interval_seconds = 86400
+cleanup_policy = "stale-only"
+thumbnail_max_age_days = 60
+optimized_video_max_size_mb = 10240
+
 [transitions]
 video_stop_timeout_seconds = 2.0
 kill_video_on_timeout = true
@@ -108,6 +137,7 @@ kill_video_on_timeout = true
 [transitions.basic]
 enabled = true
 set_image_before_stopping_video = true
+video_to_image_settle_seconds = 0.9
 
 [transitions.effects]
 fade_overlay = false
@@ -120,3 +150,10 @@ timeout_seconds = 2.0
 
 [colors]
 video_color_source = "thumbnail"
+
+[resource_mode]
+battery_behavior = "keep"
+high_load_behavior = "keep"
+cpu_load_threshold = 0.85
+gpu_load_threshold = 85.0
+sustained_seconds = 15.0

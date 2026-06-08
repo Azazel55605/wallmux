@@ -28,7 +28,9 @@ class FakeRunner(CommandRunner):
 
 
 def sample_config(tmp_path: Path) -> dict:
-    return load_config(tmp_path / "config.toml")
+    config = load_config(tmp_path / "config.toml")
+    config["video_optimization"]["auto_optimize"] = False
+    return config
 
 
 def sample_config_path(tmp_path: Path) -> Path:
@@ -483,6 +485,68 @@ def test_daemon_reports_empty_state(tmp_path: Path, monkeypatch) -> None:
     assert response["daemon"]["autoswitch"]["enabled"] is False
     assert "uptime_seconds" in response["daemon"]
     assert response["daemon"]["last_error"] is None
+    assert response["daemon"]["video_optimization"]["max_concurrent_jobs"] == 2
+
+
+def test_daemon_reload_scans_active_library_for_video_optimization(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    video = tmp_path / "wallpaper.mp4"
+    video.write_bytes(b"video")
+    config = sample_config(tmp_path)
+    config["general"]["wallpaper_dirs"] = [str(tmp_path)]
+    config["video_optimization"]["auto_optimize"] = True
+    daemon = WallmuxDaemon(
+        config=config,
+        config_path=sample_config_path(tmp_path),
+        state_path=tmp_path / "state.json",
+        restore_on_startup=False,
+    )
+    calls = []
+    monkeypatch.setattr(
+        daemon.video_optimizer,
+        "enqueue_library",
+        lambda items, effective_config: calls.append((items, effective_config)) or 1,
+    )
+
+    daemon._scan_video_library_for_optimization(force=True)
+
+    assert len(calls) == 1
+    assert calls[0][0][0].path == video
+    assert daemon.events[-1]["message"] == "queued 1 video(s)"
+
+
+def test_daemon_immediately_scans_requested_folder_for_video_optimization(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    video_dir = tmp_path / "opened-folder"
+    video_dir.mkdir()
+    video = video_dir / "wallpaper.mp4"
+    video.write_bytes(b"video")
+    config = sample_config(tmp_path)
+    config["video_optimization"]["auto_optimize"] = True
+    monkeypatch.setattr("wallmux.core.daemon.load_config", lambda *_args: config)
+    daemon = WallmuxDaemon(
+        config=config,
+        config_path=sample_config_path(tmp_path),
+        state_path=tmp_path / "state.json",
+        restore_on_startup=False,
+    )
+    calls = []
+    monkeypatch.setattr(
+        daemon.video_optimizer,
+        "enqueue_library",
+        lambda items, effective_config: calls.append((items, effective_config)) or 1,
+    )
+
+    response = daemon.handle_request(
+        {"command": "scan-video-library", "directories": [str(video_dir)]}
+    )
+
+    assert response == {"ok": True, "queued": 1}
+    assert [item.path for item in calls[0][0]] == [video]
 
 
 def test_daemon_state_includes_monitor_status_and_events(tmp_path: Path, monkeypatch) -> None:

@@ -332,12 +332,20 @@ icon = "wallmux-gui"
 desktop_entry = "wallmux-gui"
 ```
 
-The default `mpvpaper` options ignore the user's mpv config, suppress mpv status output, crop/fill mixed aspect-ratio monitors, and use cheaper scaling for large videos:
+The default `mpvpaper` options ignore the user's mpv config, suppress mpv status output, crop/fill mixed aspect-ratio monitors, and use robust system-clock timing. Hardware decoding is a separate GUI setting:
 
 ```toml
 [backends.mpvpaper]
-options = "no-config no-audio loop hwdec=auto profile=fast video-sync=display-resample interpolation=no scale=bilinear cscale=bilinear dscale=bilinear panscan=1.0 osd-level=0 msg-level=all=no"
+options = "no-config no-audio loop-file=inf keep-open=yes profile=fast video-sync=audio interpolation=no scale=bilinear cscale=bilinear dscale=bilinear panscan=1.0 osd-level=0 no-osc no-osd-bar really-quiet"
+hardware_decoding = "automatic"
 ```
+
+Available hardware-decoding modes are `automatic` (`hwdec=auto-safe`), `software`
+(`hwdec=no`, useful for driver-related flicker), and `hardware` (`hwdec=auto`).
+
+Automatic video optimization is daemon-owned. `wallmuxd` scans the active profile/library after startup, reloads, and periodically, running at most two ffmpeg jobs simultaneously. Progress is available through replaceable desktop notifications, `wallmuxctl state`, the GUI State tab, and thumbnail overlays while the GUI is open.
+
+See `docs/VIDEO_TROUBLESHOOTING.md` for video-to-image handoff settings and black-frame troubleshooting.
 
 Optional transition effect helpers can call external commands for fade overlays, screenshot bridges, or QuickShell integration. They are disabled by default:
 

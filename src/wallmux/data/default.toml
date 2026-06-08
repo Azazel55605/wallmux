@@ -50,7 +50,8 @@ fit_mode = "cover"
 
 [backends.mpvpaper]
 command = "mpvpaper"
-options = "no-config no-audio loop hwdec=auto profile=fast video-sync=display-resample interpolation=no scale=bilinear cscale=bilinear dscale=bilinear panscan=1.0 osd-level=0 msg-level=all=no"
+options = "no-config no-audio loop-file=inf keep-open=yes profile=fast video-sync=audio interpolation=no scale=bilinear cscale=bilinear dscale=bilinear panscan=1.0 osd-level=0 no-osc no-osd-bar really-quiet"
+hardware_decoding = "automatic"
 
 [backends.gslapper]
 command = "gslapper"
@@ -93,6 +94,7 @@ title_patterns = []
 enabled = true
 switched_wallpaper = true
 switching_failed = true
+video_optimization = true
 command = "notify-send"
 app_name = "Wallmux"
 icon = "wallmux-gui"
@@ -108,6 +110,8 @@ profile = "balanced"
 cache_dir = ""
 prefer_optimized = true
 bulk_warning = true
+max_concurrent_jobs = 2
+library_scan_interval_seconds = 30
 codec = "libx264"
 codec_names = ["h264"]
 container = "mp4"
@@ -133,6 +137,7 @@ kill_video_on_timeout = true
 [transitions.basic]
 enabled = true
 set_image_before_stopping_video = true
+video_to_image_settle_seconds = 0.9
 
 [transitions.effects]
 fade_overlay = false

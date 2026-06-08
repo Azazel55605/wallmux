@@ -40,7 +40,56 @@ def notify_switch_failed(config: dict[str, Any], error: Exception) -> None:
     send_notification(config, "Wallpaper switch failed", str(error))
 
 
+def notify_video_optimization(
+    config: dict[str, Any],
+    title: str,
+    body: str,
+    *,
+    percent: float | None = None,
+    replace_id: int | None = None,
+) -> int | None:
+    settings = notifications_config(config)
+    if not notifications_enabled(config) or not settings.get("video_optimization", True):
+        return replace_id
+
+    command = _notification_command(config)
+    command.append("--print-id")
+    if replace_id:
+        command.extend(["--replace-id", str(replace_id)])
+    if percent is not None:
+        value = max(0, min(100, int(round(percent))))
+        command.extend(["--hint", f"int:value:{value}"])
+    command.extend([title, body])
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return replace_id
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return replace_id
+
+
 def send_notification(config: dict[str, Any], title: str, body: str) -> None:
+    notification_command = _notification_command(config)
+    notification_command.extend([title, body])
+    try:
+        subprocess.Popen(
+            notification_command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return
+
+
+def _notification_command(config: dict[str, Any]) -> list[str]:
     settings = notifications_config(config)
     command = str(settings.get("command", "notify-send"))
     app_name = str(settings.get("app_name", "Wallmux"))
@@ -53,15 +102,7 @@ def send_notification(config: dict[str, Any], title: str, body: str) -> None:
         notification_command.extend(["--hint", f"string:image-path:{resolved_icon}"])
     if desktop_entry:
         notification_command.extend(["--hint", f"string:desktop-entry:{desktop_entry}"])
-    notification_command.extend([title, body])
-    try:
-        subprocess.Popen(
-            notification_command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except OSError:
-        return
+    return notification_command
 
 
 def notification_icon(icon: str) -> str:

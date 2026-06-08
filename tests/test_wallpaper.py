@@ -46,6 +46,7 @@ def sample_config(tmp_path: Path) -> dict:
     config = load_config(tmp_path / "config.toml")
     config["hooks"]["before_set"] = []
     config["hooks"]["after_set"] = []
+    config["transitions"]["basic"]["video_to_image_settle_seconds"] = 0.0
     return config
 
 
@@ -144,9 +145,10 @@ def test_set_video_starts_mpvpaper_and_saves_pid(tmp_path: Path) -> None:
         "mpvpaper",
         "-o",
         (
-            "no-config no-audio loop hwdec=auto profile=fast "
-            "video-sync=display-resample interpolation=no scale=bilinear "
-            "cscale=bilinear dscale=bilinear panscan=1.0 osd-level=0 msg-level=all=no"
+            "no-config no-audio loop-file=inf keep-open=yes profile=fast "
+            "video-sync=audio interpolation=no scale=bilinear cscale=bilinear "
+            "dscale=bilinear panscan=1.0 osd-level=0 no-osc no-osd-bar really-quiet "
+            "hwdec=auto-safe"
         ),
     ]
     assert runner.starts[0][3:] == ["eDP-1", str(video)]
@@ -289,7 +291,9 @@ def test_gif_with_video_backend_tracks_process(tmp_path: Path) -> None:
 
     assert result.backend == "mpvpaper"
     assert result.pid == 4201
-    assert runner.starts == [["mpvpaper", "-o", "loop no-audio", "DP-1", str(gif)]]
+    assert runner.starts == [
+        ["mpvpaper", "-o", "loop no-audio hwdec=auto-safe", "DP-1", str(gif)]
+    ]
 
 
 def test_rejects_incompatible_backend_override(tmp_path: Path) -> None:
@@ -551,6 +555,36 @@ def test_basic_video_to_image_sets_image_before_stopping_video(
     set_wallpaper(image, "DP-1", config=config, runner=runner, state_path=state_path)
 
     assert events == ["run", "terminate"]
+
+
+def test_video_to_image_waits_for_image_handoff_before_stopping_video(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = FakeRunner()
+    state_path = tmp_path / "state.json"
+    video = tmp_path / "one.mp4"
+    image = tmp_path / "two.png"
+    video.write_bytes(b"")
+    image.write_bytes(b"")
+    events: list[str] = []
+
+    monkeypatch.setattr("wallmux.core.wallpaper.pid_is_alive", lambda pid: True)
+    monkeypatch.setattr(
+        "wallmux.core.wallpaper.time.sleep",
+        lambda seconds: events.append(f"sleep:{seconds}"),
+    )
+    monkeypatch.setattr(
+        "wallmux.core.wallpaper.terminate_pid",
+        lambda *_args, **_kwargs: events.append("terminate") or True,
+    )
+    config = sample_config(tmp_path)
+    config["transitions"]["basic"]["video_to_image_settle_seconds"] = 0.9
+
+    set_wallpaper(video, "DP-1", config=config, runner=runner, state_path=state_path)
+    set_wallpaper(image, "DP-1", config=config, runner=runner, state_path=state_path)
+
+    assert events == ["sleep:0.9", "terminate"]
 
 
 def test_image_to_image_keeps_native_backend_transition(tmp_path: Path, monkeypatch) -> None:

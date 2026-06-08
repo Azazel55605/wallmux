@@ -329,10 +329,17 @@ def optimized_video_for_source(path: Path, config: dict[str, Any]) -> Path | Non
     video_config = config.get("video_optimization", {})
     if not bool(video_config.get("prefer_optimized", False)):
         return None
+    candidate = cached_optimized_video_for_source(path, config)
+    if candidate is not None:
+        from wallmux.core.cache import touch_optimized_video_metadata
+
+        touch_optimized_video_metadata(optimized_video_metadata_path(candidate))
+    return candidate
+
+
+def cached_optimized_video_for_source(path: Path, config: dict[str, Any]) -> Path | None:
     profile = configured_video_profile(config)
-    settings = VIDEO_OPTIMIZATION_PROFILES.get(profile)
-    if settings is None:
-        return None
+    settings = _optimization_profile_settings(profile, config)
     candidate = optimized_video_path(
         path,
         profile=profile,
@@ -341,9 +348,6 @@ def optimized_video_for_source(path: Path, config: dict[str, Any]) -> Path | Non
     )
     metadata_path = optimized_video_metadata_path(candidate)
     if candidate.exists() and metadata_path.exists():
-        from wallmux.core.cache import touch_optimized_video_metadata
-
-        touch_optimized_video_metadata(metadata_path)
         return candidate
     return None
 

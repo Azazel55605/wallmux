@@ -327,6 +327,9 @@ Record notable checks here as the project moves.
 - 2026-05-26: Finished V2.6 with bulk video optimization, configurable optimization settings, optional optimized-video preference, resource-mode state, battery/high-load inhibition behavior, and best-effort GPU load detection.
 - 2026-05-29: Finished V2.7 cache maintenance with shared cache stats/clean/rebuild helpers, `wallmuxctl cache` commands, periodic daemon cleanup, age-based thumbnail cleanup, optimized-video stale/LRU cleanup, and a GUI Cache settings tab.
 - 2026-05-29: Finished V2.8 examples and recipes with generic wallpaper/color hooks, an adaptable profile theme hook, profile parent/child examples, autoswitch presets, backend fallback snippets, and cache/video optimization recipes.
+- 2026-06-08: Moved automatic video optimization into `wallmuxd` with active-library scans, a two-job queue, replaceable progress notifications, GUI/CLI queue status, improved video-to-image handoff timing, and safer mpvpaper defaults for black-frame mitigation.
+- 2026-06-08: Added explicit Automatic, Software, and Hardware mpvpaper decoding modes with GUI selection and migration from existing `hwdec` options.
+- 2026-06-08: Added immediate daemon video-optimization scans when profiles, configured libraries, or manually opened GUI folders change.
 - 2026-05-26: Added GUI profile configuration for editing profile metadata, folders, backend rules, autoswitch behavior, filters, and profile switch hooks.
 - 2026-05-26: Improved profile GUI setup with folder picker controls and clearer category/subcategory guidance.
 - 2026-05-26: Added profile category import from existing folder structures, creating one profile per child folder such as `green/Anime` and `green/Landscape`.

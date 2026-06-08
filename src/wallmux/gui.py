@@ -36,13 +36,12 @@ from wallmux.core.profiles import (
 )
 from wallmux.core.thumbnails import ensure_thumbnail
 from wallmux.core.video import (
+    cached_optimized_video_for_source,
     configured_video_cache_dir,
-    configured_video_profile,
     format_video_library_optimization_result,
     format_video_optimization_result,
     optimize_video,
     optimize_video_library,
-    optimized_video_for_source,
 )
 from wallmux.core.wallpaper import WallmuxError, set_wallpaper, set_wallpaper_for_all
 
@@ -354,6 +353,11 @@ class WallmuxWindow(QMainWindow):
         self.daemon_status_timer = QTimer(self)
         self.daemon_status_timer.timeout.connect(self.refresh_daemon_status)
         self.daemon_status_timer.start(5000)
+        self.video_optimization_status_timer = QTimer(self)
+        self.video_optimization_status_timer.timeout.connect(
+            self.refresh_daemon_video_optimization
+        )
+        self.video_optimization_status_timer.start(2000)
         self.set_zen_mode(
             bool(self.config.get("gui", {}).get("zen_mode", False)),
             persist=False,
@@ -712,6 +716,7 @@ class WallmuxWindow(QMainWindow):
         self.notifications_enabled_check = QCheckBox("Enabled")
         self.notify_switched_check = QCheckBox("Switched wallpaper")
         self.notify_failed_check = QCheckBox("Switching failed")
+        self.notify_video_optimization_check = QCheckBox("Video optimization progress")
         self.notification_command_edit = QLineEdit()
         self.notification_app_name_edit = QLineEdit()
         self.notification_icon_edit = QLineEdit()
@@ -719,6 +724,7 @@ class WallmuxWindow(QMainWindow):
         notifications_form.addRow("", self.notifications_enabled_check)
         notifications_form.addRow("", self.notify_switched_check)
         notifications_form.addRow("", self.notify_failed_check)
+        notifications_form.addRow("", self.notify_video_optimization_check)
         notifications_form.addRow(
             _form_label(
                 "Command",
@@ -1171,6 +1177,10 @@ class WallmuxWindow(QMainWindow):
 
         self.mpvpaper_command_edit = QLineEdit()
         self.mpvpaper_options_edit = QLineEdit()
+        self.mpvpaper_hwdec_box = QComboBox()
+        self.mpvpaper_hwdec_box.addItem("Automatic (safe)", "automatic")
+        self.mpvpaper_hwdec_box.addItem("Software (flicker-safe)", "software")
+        self.mpvpaper_hwdec_box.addItem("Hardware", "hardware")
         mpvpaper_form = QFormLayout()
         mpvpaper_form.addRow(
             _form_label("Command", "Executable name or path used for mpvpaper."),
@@ -1178,8 +1188,16 @@ class WallmuxWindow(QMainWindow):
         )
         mpvpaper_form.addRow(
             _form_label(
+                "Hardware decoding",
+                "Automatic uses mpv's safe hardware decoding. Software is slower but can "
+                "avoid driver-related black frames. Hardware prefers GPU decoding.",
+            ),
+            self.mpvpaper_hwdec_box,
+        )
+        mpvpaper_form.addRow(
+            _form_label(
                 "Options",
-                "mpv options passed to video wallpapers, for example no-audio loop.",
+                "Advanced mpv options. Hardware decoding is controlled separately.",
             ),
             self.mpvpaper_options_edit,
         )
@@ -1381,6 +1399,10 @@ class WallmuxWindow(QMainWindow):
         transition_form = QFormLayout()
         self.basic_transitions_check = QCheckBox("Basic transitions")
         self.basic_image_bridge_check = QCheckBox("Set image before stopping video")
+        self.video_to_image_settle_spin = QDoubleSpinBox()
+        self.video_to_image_settle_spin.setRange(0.0, 10.0)
+        self.video_to_image_settle_spin.setSingleStep(0.1)
+        self.video_to_image_settle_spin.setDecimals(1)
         self.fade_overlay_check = QCheckBox("Fade overlay")
         self.screenshot_bridge_check = QCheckBox("Screenshot bridge")
         self.quickshell_overlay_check = QCheckBox("QuickShell overlay")
@@ -1394,6 +1416,13 @@ class WallmuxWindow(QMainWindow):
 
         transition_form.addRow("", self.basic_transitions_check)
         transition_form.addRow("", self.basic_image_bridge_check)
+        transition_form.addRow(
+            _form_label(
+                "Video to Image Settle",
+                "Seconds to keep the video visible while the next image finishes loading.",
+            ),
+            self.video_to_image_settle_spin,
+        )
         transition_form.addRow("", self.fade_overlay_check)
         transition_form.addRow(
             _form_label(
@@ -1493,6 +1522,7 @@ class WallmuxWindow(QMainWindow):
         )
         active = get_active_profile(self.config)
         self.items = [item for item in self.items if profile_matches_filters(active, item)]
+        self._request_immediate_video_scan([folder])
         self.populate_grid()
         self.status.showMessage(f"{len(self.items)} wallpapers in {folder}", 5000)
         self.grid.setFocus(Qt.FocusReason.OtherFocusReason)
@@ -1519,10 +1549,22 @@ class WallmuxWindow(QMainWindow):
             }.values(),
             key=lambda item: item.path.name.casefold(),
         )
+        self._request_immediate_video_scan([Path(raw_dir) for raw_dir in dirs])
         self.populate_grid()
         label = f" for {active.label}" if active else ""
         self.status.showMessage(f"{len(self.items)} wallpapers{label}", 5000)
         self.grid.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _request_immediate_video_scan(self, directories: list[Path]) -> None:
+        try:
+            send_request(
+                {
+                    "command": "scan-video-library",
+                    "directories": [str(path.expanduser()) for path in directories],
+                }
+            )
+        except DaemonUnavailable:
+            pass
 
     def closeEvent(self, event) -> None:
         self.thread_pool.waitForDone(1000)
@@ -1554,7 +1596,7 @@ class WallmuxWindow(QMainWindow):
             widget_item.setToolTip(str(item.path))
             self.grid.addItem(widget_item)
             self.queue_thumbnail(item)
-            self.queue_video_optimization(item)
+            self.refresh_video_cache_marker(item)
 
         if self.grid.count() == 0:
             self.preview.setText("No wallpapers")
@@ -1579,7 +1621,6 @@ class WallmuxWindow(QMainWindow):
         )
         self._set_preview_pixmap(self._placeholder_pixmap(self.selected_item))
         self.queue_thumbnail(self.selected_item)
-        self.queue_video_optimization(self.selected_item)
         self.set_button.setEnabled(True)
 
     def set_selected_wallpaper(self) -> None:
@@ -2001,6 +2042,7 @@ class WallmuxWindow(QMainWindow):
             "mpvpaper": {
                 "command": self.mpvpaper_command_edit.text(),
                 "options": self.mpvpaper_options_edit.text(),
+                "hardware_decoding": self.mpvpaper_hwdec_box.currentData(),
             },
             "gslapper": {
                 "command": self.gslapper_command_edit.text(),
@@ -2016,6 +2058,7 @@ class WallmuxWindow(QMainWindow):
         self.status.showMessage("Backend defaults saved", 5000)
 
     def save_video_settings(self) -> None:
+        current = self.config.get("video_optimization", {})
         self.config["video_optimization"] = {
             "enabled": self.video_opt_enabled_check.isChecked(),
             "auto_optimize": self.video_opt_enabled_check.isChecked(),
@@ -2023,6 +2066,10 @@ class WallmuxWindow(QMainWindow):
             "cache_dir": "",
             "prefer_optimized": True,
             "bulk_warning": True,
+            "max_concurrent_jobs": min(2, int(current.get("max_concurrent_jobs", 2))),
+            "library_scan_interval_seconds": float(
+                current.get("library_scan_interval_seconds", 30)
+            ),
             "codec": self.video_codec_edit.text(),
             "codec_names": self._comma_values(self.video_codec_names_edit.text()),
             "container": self.video_container_edit.text(),
@@ -2290,6 +2337,7 @@ class WallmuxWindow(QMainWindow):
             "enabled": self.notifications_enabled_check.isChecked(),
             "switched_wallpaper": self.notify_switched_check.isChecked(),
             "switching_failed": self.notify_failed_check.isChecked(),
+            "video_optimization": self.notify_video_optimization_check.isChecked(),
             "command": self.notification_command_edit.text(),
             "app_name": self.notification_app_name_edit.text(),
             "icon": self.notification_icon_edit.text(),
@@ -2519,12 +2567,37 @@ class WallmuxWindow(QMainWindow):
                 lines.append(f"wallmuxd: error ({response.get('error', 'unknown error')})")
             else:
                 self.refresh_daemon_status(True)
+                self._sync_daemon_video_optimization(
+                    response.get("daemon", {}).get("video_optimization", {})
+                )
                 lines.extend(self._format_state_response(response))
 
         lines.append("")
         lines.append("Dependencies")
         lines.append(format_doctor_report(run_doctor(video_only=True)))
         self.state_view.setPlainText("\n".join(lines))
+
+    def refresh_daemon_video_optimization(self) -> None:
+        try:
+            response = send_request({"command": "state"}, timeout_seconds=0.2)
+        except DaemonUnavailable:
+            return
+        if response.get("ok"):
+            self._sync_daemon_video_optimization(
+                response.get("daemon", {}).get("video_optimization", {})
+            )
+
+    def _sync_daemon_video_optimization(self, status: dict) -> None:
+        for job in status.get("jobs", []):
+            source_path = str(job.get("file", ""))
+            if not source_path:
+                continue
+            self.video_optimize_state[source_path] = {
+                "status": job.get("status", "queued"),
+                "percent": job.get("percent"),
+                "message": job.get("error", ""),
+            }
+            self.update_video_item_icon(source_path)
 
     def control_daemon(self, action: str) -> None:
         ok, message = _control_wallmuxd(action)
@@ -2540,6 +2613,7 @@ class WallmuxWindow(QMainWindow):
         autoswitch = daemon.get("autoswitch", {})
         inhibition = daemon.get("inhibition", {})
         resource_mode = daemon.get("resource_mode", {})
+        video_optimization = daemon.get("video_optimization", {})
         schema_version = daemon.get("state_schema_version")
         lines = [
             "Daemon",
@@ -2588,6 +2662,11 @@ class WallmuxWindow(QMainWindow):
                 f"gpu load percent: {_state_value(resource_mode, 'gpu_load_percent')}",
                 f"high load: {resource_mode.get('high_load', False)}",
                 f"high load behavior: {resource_mode.get('high_load_behavior', 'keep')}",
+                "",
+                "Video Optimization",
+                f"running: {video_optimization.get('running', 0)}",
+                f"queued: {video_optimization.get('queued', 0)}",
+                f"max concurrent: {video_optimization.get('max_concurrent_jobs', 2)}",
                 "",
                 "Monitors",
             ]
@@ -2675,6 +2754,9 @@ class WallmuxWindow(QMainWindow):
             bool(notifications.get("switched_wallpaper", True))
         )
         self.notify_failed_check.setChecked(bool(notifications.get("switching_failed", True)))
+        self.notify_video_optimization_check.setChecked(
+            bool(notifications.get("video_optimization", True))
+        )
         self.notification_command_edit.setText(str(notifications.get("command", "notify-send")))
         self.notification_app_name_edit.setText(str(notifications.get("app_name", "Wallmux")))
         self.notification_icon_edit.setText(str(notifications.get("icon", "wallmux-gui")))
@@ -2724,6 +2806,10 @@ class WallmuxWindow(QMainWindow):
         mpvpaper = backends.get("mpvpaper", {})
         self.mpvpaper_command_edit.setText(str(mpvpaper.get("command", "mpvpaper")))
         self.mpvpaper_options_edit.setText(str(mpvpaper.get("options", "")))
+        self._set_combo_data(
+            self.mpvpaper_hwdec_box,
+            str(mpvpaper.get("hardware_decoding", "automatic")),
+        )
         gslapper = backends.get("gslapper", {})
         self.gslapper_command_edit.setText(str(gslapper.get("command", "gslapper")))
 
@@ -2870,6 +2956,9 @@ class WallmuxWindow(QMainWindow):
         self.basic_image_bridge_check.setChecked(
             bool(basic.get("set_image_before_stopping_video", True))
         )
+        self.video_to_image_settle_spin.setValue(
+            float(basic.get("video_to_image_settle_seconds", 0.9))
+        )
         self.fade_overlay_check.setChecked(bool(effects.get("fade_overlay", False)))
         self.fade_command_edit.setText(str(effects.get("fade_command", "")))
         self.screenshot_bridge_check.setChecked(bool(effects.get("screenshot_bridge", False)))
@@ -2883,6 +2972,7 @@ class WallmuxWindow(QMainWindow):
         transitions["basic"] = {
             "enabled": self.basic_transitions_check.isChecked(),
             "set_image_before_stopping_video": self.basic_image_bridge_check.isChecked(),
+            "video_to_image_settle_seconds": self.video_to_image_settle_spin.value(),
         }
         transitions["effects"] = {
             "fade_overlay": self.fade_overlay_check.isChecked(),
@@ -2949,44 +3039,18 @@ class WallmuxWindow(QMainWindow):
         task.signals.failed.connect(self.finish_thumbnail)
         self.thread_pool.start(task)
 
-    def queue_video_optimization(self, item: WallpaperItem) -> None:
+    def refresh_video_cache_marker(self, item: WallpaperItem) -> None:
         if item.wallpaper_type is not WallpaperType.VIDEO:
             return
-        video_config = self.config.get("video_optimization", {})
-        if not bool(video_config.get("auto_optimize", video_config.get("enabled", True))):
-            return
         key = str(item.path)
-        if key in self.video_optimize_tasks:
+        if cached_optimized_video_for_source(item.path, self.config) is None:
             return
-        if optimized_video_for_source(item.path, self.config) is not None:
-            self.video_optimize_state[key] = {
-                "status": "done",
-                "percent": 100.0,
-                "message": "cached",
-            }
-            self.update_video_item_icon(key)
-            return
-        task = VideoOptimizeTask(
-            [item],
-            profile=configured_video_profile(self.config),
-            force=False,
-            library=False,
-            config=self.config,
-        )
-        task.signals.progress.connect(self._video_optimize_progress)
-        task.signals.source_progress.connect(self._video_source_progress)
-        task.signals.source_done.connect(self._video_source_done)
-        task.signals.source_failed.connect(self._video_source_failed)
-        task.signals.finished.connect(lambda _message: None)
-        task.signals.failed.connect(lambda _message: None)
-        self.video_optimize_tasks[key] = task
         self.video_optimize_state[key] = {
-            "status": "running",
-            "percent": 0.0,
-            "message": "queued",
+            "status": "done",
+            "percent": 100.0,
+            "message": "cached",
         }
         self.update_video_item_icon(key)
-        self.thread_pool.start(task)
 
     def apply_thumbnail(self, source_path: str, thumbnail_path: str) -> None:
         self.finish_thumbnail(source_path)
@@ -3028,7 +3092,7 @@ class WallmuxWindow(QMainWindow):
         painter = QPainter(overlay)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         status = state.get("status")
-        if status == "running":
+        if status in {"queued", "running"}:
             percent = state.get("percent")
             width = overlay.width()
             bar_width = width if percent is None else int(width * (float(percent) / 100.0))

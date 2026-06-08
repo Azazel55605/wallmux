@@ -32,6 +32,7 @@ from wallmux.core.inhibition import (
     pause_videos,
 )
 from wallmux.core.ipc import default_socket_path
+from wallmux.core.library import scan_wallpaper_dir
 from wallmux.core.mime import WallpaperType
 from wallmux.core.monitors import get_focused_monitor, list_monitors
 from wallmux.core.notifications import notify_switch_failed, notify_wallpaper_switched
@@ -43,6 +44,7 @@ from wallmux.core.resources import (
     high_load_behavior,
 )
 from wallmux.core.state import WallmuxState, load_state, save_state, state_file
+from wallmux.core.video_queue import VideoOptimizationQueue
 from wallmux.core.wallpaper import (
     CommandRunner,
     SetResult,
@@ -82,15 +84,25 @@ class WallmuxDaemon:
         self.next_startup_restore_at = time.monotonic()
         self.next_inhibition_check_at = 0.0
         self.next_cache_maintenance_at = time.monotonic() + self._cache_cleanup_interval()
+        self.next_video_library_scan_at = 0.0
         self.inhibition_status = InhibitionStatus(False)
         self.high_load_started_at: float | None = None
         self.paused_video_pids: set[int] = set()
         self.started_at = time.time()
         self.last_error: dict[str, Any] | None = None
         self.events: list[dict[str, Any]] = []
+        self.video_optimizer = VideoOptimizationQueue(
+            max_workers=self._video_optimization_workers(),
+            event_callback=lambda kind, message, status: self._record_event(
+                kind,
+                message,
+                status=status,
+            ),
+        )
 
     def start(self) -> None:
         self.cleanup_stale_pids()
+        self._scan_video_library_for_optimization(force=True)
         if self.restore_on_startup:
             self._restore_on_startup()
 
@@ -119,6 +131,7 @@ class WallmuxDaemon:
                             pass
                     self.tick()
             finally:
+                self.video_optimizer.shutdown()
                 if self.socket_path.exists():
                     self.socket_path.unlink()
 
@@ -139,6 +152,8 @@ class WallmuxDaemon:
                 return self._handle_restore()
             if command == "reload":
                 return self._handle_reload()
+            if command == "scan-video-library":
+                return self._handle_scan_video_library(request)
             if command == "autoswitch-now":
                 return self._handle_autoswitch_now(request)
             if command == "stop-video":
@@ -168,11 +183,13 @@ class WallmuxDaemon:
         self.next_autoswitch_at = time.monotonic() + autoswitch_interval(self.config)
         self.next_inhibition_check_at = 0.0
         self.next_cache_maintenance_at = time.monotonic() + self._cache_cleanup_interval()
+        self.next_video_library_scan_at = 0.0
 
     def tick(self) -> None:
         self._retry_startup_restore()
         self._update_inhibition()
         self._run_cache_maintenance()
+        self._scan_video_library_for_optimization()
         if not autoswitch_enabled(self.config):
             return
         if self.inhibition_status.inhibited and self._should_pause_autoswitch():
@@ -253,8 +270,28 @@ class WallmuxDaemon:
 
     def _handle_reload(self) -> dict[str, Any]:
         self.reload_config()
+        self._scan_video_library_for_optimization(force=True)
         self._record_event("reload", "config reloaded")
         return {"ok": True}
+
+    def _handle_scan_video_library(self, request: dict[str, Any]) -> dict[str, Any]:
+        self.reload_config()
+        directories = request.get("directories", [])
+        if not isinstance(directories, list):
+            raise ValueError("directories must be a list")
+        effective_config = effective_config_for_profile(self.config)
+        items = []
+        for raw_directory in directories:
+            items.extend(
+                scan_wallpaper_dir(
+                    Path(str(raw_directory)),
+                    backend_rules=effective_config.get("backend_rules", {}),
+                )
+            )
+        added = self.video_optimizer.enqueue_library(items, effective_config)
+        if added:
+            self._record_event("video-optimize", f"queued {added} video(s)")
+        return {"ok": True, "queued": added}
 
     def _handle_autoswitch_now(self, request: dict[str, Any]) -> dict[str, Any]:
         self.reload_config()
@@ -307,6 +344,7 @@ class WallmuxDaemon:
                 "autoswitch": self._autoswitch_status(),
                 "inhibition": self._inhibition_status(),
                 "resource_mode": self._resource_status(),
+                "video_optimization": self.video_optimizer.status(),
             },
         }
 
@@ -459,6 +497,38 @@ class WallmuxDaemon:
         return max(
             60.0,
             float(self.config.get("cache", {}).get("cleanup_interval_seconds", 86400)),
+        )
+
+    def _scan_video_library_for_optimization(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now < self.next_video_library_scan_at:
+            return
+        self.next_video_library_scan_at = now + self._video_library_scan_interval()
+        added = self.video_optimizer.enqueue_library(
+            load_wallpaper_library(self.config),
+            effective_config_for_profile(self.config),
+        )
+        if added:
+            self._record_event("video-optimize", f"queued {added} video(s)")
+
+    def _video_library_scan_interval(self) -> float:
+        return max(
+            5.0,
+            float(
+                self.config.get("video_optimization", {}).get(
+                    "library_scan_interval_seconds",
+                    30.0,
+                )
+            ),
+        )
+
+    def _video_optimization_workers(self) -> int:
+        return max(
+            1,
+            min(
+                2,
+                int(self.config.get("video_optimization", {}).get("max_concurrent_jobs", 2)),
+            ),
         )
 
     def _update_inhibition(self, *, force: bool = False) -> None:

@@ -118,6 +118,47 @@ options = "no-audio loop hwdec=auto"
     config = load_config(config_path)
 
     assert config["backends"]["mpvpaper"]["options"].startswith("no-config no-audio")
+    assert config["backends"]["mpvpaper"]["hardware_decoding"] == "automatic"
+
+
+def test_load_config_migrates_previous_mpvpaper_default_options(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    previous_options = (
+        "no-config no-audio loop hwdec=auto profile=fast "
+        "video-sync=display-resample interpolation=no scale=bilinear "
+        "cscale=bilinear dscale=bilinear panscan=1.0 osd-level=0 msg-level=all=no"
+    )
+    config_path.write_text(
+        f"""
+[backends.mpvpaper]
+command = "mpvpaper"
+options = "{previous_options}"
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert "loop-file=inf" in config["backends"]["mpvpaper"]["options"]
+    assert "video-sync=audio" in config["backends"]["mpvpaper"]["options"]
+    assert config["backends"]["mpvpaper"]["hardware_decoding"] == "automatic"
+
+
+def test_load_config_migrates_software_mpvpaper_decoding_mode(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[backends.mpvpaper]
+command = "mpvpaper"
+options = "no-audio loop-file=inf hwdec=no"
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config["backends"]["mpvpaper"]["hardware_decoding"] == "software"
+    assert "hwdec=" not in config["backends"]["mpvpaper"]["options"]
 
 
 def test_load_config_migrates_video_optimization_to_auto_cache_default(

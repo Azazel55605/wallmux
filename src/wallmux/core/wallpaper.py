@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -205,6 +206,7 @@ def _set_wallpaper_with_backend(
 
     pid = _execute(command, backend_name, wallpaper_type, runner)
     if previous and previous.pid and stop_video_after_image_set:
+        _wait_for_video_to_image_handoff(config)
         transitions_config = config.get("transitions", {})
         terminate_pid(
             previous.pid,
@@ -525,6 +527,7 @@ def _set_image_wallpaper_for_all_outputs(
         raise WallmuxError(f"no backend candidates for {wallpaper_type.value} wallpaper")
 
     if stop_videos_after_image_set:
+        _wait_for_video_to_image_handoff(config)
         _terminate_pids(
             pids_to_stop,
             timeout_seconds=float(transitions_config.get("video_stop_timeout_seconds", 2.0)),
@@ -591,6 +594,13 @@ def _basic_image_bridge_enabled(config: dict) -> bool:
     if not bool(basic_config.get("enabled", True)):
         return False
     return bool(basic_config.get("set_image_before_stopping_video", True))
+
+
+def _wait_for_video_to_image_handoff(config: dict) -> None:
+    basic_config = config.get("transitions", {}).get("basic", {})
+    delay = max(0.0, float(basic_config.get("video_to_image_settle_seconds", 0.9)))
+    if delay:
+        time.sleep(delay)
 
 
 def _run_foreground(command: CommandPlan, runner: CommandRunner) -> None:
