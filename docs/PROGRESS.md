@@ -333,6 +333,7 @@ Record notable checks here as the project moves.
 - 2026-06-08: Added a runnable QuickShell layer-shell fade overlay example with IPC controller, Wallmux configuration, setup guide, and before/after helper invocation.
 - 2026-06-08: Improved QuickShell handoffs with configurable video-start settling and external transition stages for grouped all-monitor image switches.
 - 2026-06-08: Added per-transition QuickShell overlay controls, leaving image-to-image fades disabled by default.
+- 2026-06-08: Moved the example QuickShell fade to the background layer so foreground applications and desktop UI remain visible.
 - 2026-05-26: Added GUI profile configuration for editing profile metadata, folders, backend rules, autoswitch behavior, filters, and profile switch hooks.
 - 2026-05-26: Improved profile GUI setup with folder picker controls and clearer category/subcategory guidance.
 - 2026-05-26: Added profile category import from existing folder structures, creating one profile per child folder such as `green/Anime` and `green/Landscape`.

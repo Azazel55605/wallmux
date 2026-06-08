@@ -1,8 +1,10 @@
 # QuickShell Fade Overlay
 
-This example creates one non-interactive layer-shell overlay per monitor. Wallmux
-fades it to black before changing wallpaper backends, performs the switch while
-the desktop is covered, and fades it away afterward.
+This example creates one non-interactive background layer-shell surface per
+monitor. Wallmux fades the wallpaper area to black before changing wallpaper
+backends, performs the switch while it is covered, and fades it away afterward.
+Applications, panels, notifications, and other foreground surfaces remain
+visible.
 
 It improves image/video and video/image transitions without modifying mpvpaper.
 
@@ -72,6 +74,10 @@ does not intercept clicks or affect window layout.
 ## Limitations
 
 - This is a fade-through-color transition, not a screenshot crossfade.
+- Wallpaper backends also use low layer-shell layers. If a backend appears above
+  the fade surface on your compositor, change `WlrLayer.Background` to
+  `WlrLayer.Bottom` or `WlrLayer.Overlay`. `Overlay` reliably covers the
+  wallpaper but also covers applications during the transition.
 - QuickShell must already be running when Wallmux calls the helper.
 - The example expects QuickShell's executable to be named `qs`.
 - Wallmux logs helper failures to `~/.local/state/wallmux/transitions.log`.

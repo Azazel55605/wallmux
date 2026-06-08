@@ -56,7 +56,9 @@ Scope {
             exclusionMode: ExclusionMode.Ignore
             mask: Region {}
 
-            WlrLayershell.layer: WlrLayer.Overlay
+            // Keep applications, panels, notifications, and other foreground
+            // surfaces visible while only the wallpaper area fades.
+            WlrLayershell.layer: WlrLayer.Background
             WlrLayershell.exclusiveZone: 0
             WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 
