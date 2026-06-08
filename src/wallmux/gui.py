@@ -7,6 +7,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import traceback
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from wallmux.core.ipc import DaemonUnavailable, send_request
 from wallmux.core.library import WallpaperItem, filter_wallpapers, scan_wallpaper_dir
 from wallmux.core.mime import WallpaperType
 from wallmux.core.monitors import list_monitors
+from wallmux.core.notifications import notify_switch_failed, notify_wallpaper_switched
 from wallmux.core.profiles import (
     effective_config_for_profile,
     get_active_profile,
@@ -537,7 +539,7 @@ class WallmuxWindow(QMainWindow):
         self.zen_mode_check.toggled.connect(self.set_zen_mode)
         general_form.addRow("", self.zen_mode_check)
 
-        self.close_after_set_check = QCheckBox("Close after setting wallpaper")
+        self.close_after_set_check = QCheckBox("Close immediately after requesting wallpaper")
         self.close_after_set_check.toggled.connect(self.set_close_after_set)
         general_form.addRow("", self.close_after_set_check)
 
@@ -1722,12 +1724,28 @@ class WallmuxWindow(QMainWindow):
         else:
             request["monitor"] = monitor or self.monitor_box.currentText()
 
+        if self.close_after_set_check.isChecked():
+            thread = threading.Thread(
+                target=_set_wallpaper_detached,
+                args=(
+                    request,
+                    self.selected_item.path,
+                    ALL_MONITORS if request.get("all") else str(request["monitor"]),
+                    backend,
+                    all_monitor_mode,
+                ),
+                daemon=False,
+                name="wallmux-gui-set",
+            )
+            thread.start()
+            self.close()
+            return
+
         try:
             response = send_request(request)
             if not response.get("ok"):
                 raise WallmuxError(response.get("error", "unknown daemon error"))
             self._show_set_results(response["results"])
-            self._close_after_successful_set()
         except DaemonUnavailable:
             config = effective_config_for_profile(self.config)
             try:
@@ -1759,7 +1777,6 @@ class WallmuxWindow(QMainWindow):
                     for result in results
                 ]
             )
-            self._close_after_successful_set()
         except WallmuxError as error:
             QMessageBox.critical(self, "Wallmux", str(error))
 
@@ -3182,10 +3199,6 @@ class WallmuxWindow(QMainWindow):
         self.config.setdefault("gui", {})["close_after_set"] = enabled
         write_config(self.config, user_config_file())
 
-    def _close_after_successful_set(self) -> None:
-        if self.close_after_set_check.isChecked():
-            self.close()
-
     def queue_thumbnail(self, item: WallpaperItem) -> None:
         key = str(item.path)
         if key in self.pending_thumbnails:
@@ -3381,6 +3394,49 @@ def _app_icon(app: QApplication) -> QIcon:
     if not icon.isNull():
         return icon
     return app.style().standardIcon(QStyle.SP_DesktopIcon)
+
+
+def _set_wallpaper_detached(
+    request: dict,
+    file: Path,
+    monitor: str | None,
+    backend: str,
+    all_monitor_mode: str,
+) -> None:
+    """Finish a close-after-set request without touching Qt objects."""
+    try:
+        response = send_request(request)
+        if not response.get("ok"):
+            raise WallmuxError(response.get("error", "unknown daemon error"))
+        return
+    except DaemonUnavailable:
+        pass
+    except WallmuxError:
+        return
+
+    config = load_config()
+    effective_config = effective_config_for_profile(config)
+    try:
+        if monitor == ALL_MONITORS:
+            results = set_wallpaper_for_all(
+                file,
+                config=effective_config,
+                backend_override=backend,
+                mode=all_monitor_mode,
+            )
+        else:
+            results = [
+                set_wallpaper(
+                    file,
+                    monitor or "",
+                    config=effective_config,
+                    backend_override=backend,
+                )
+            ]
+    except (ValueError, WallmuxError) as error:
+        notify_switch_failed(config, error)
+        return
+    notify_wallpaper_switched(config, results)
 
 
 def _control_wallmuxd(action: str) -> tuple[bool, str]:

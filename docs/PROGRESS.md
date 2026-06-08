@@ -335,6 +335,7 @@ Record notable checks here as the project moves.
 - 2026-06-08: Added per-transition QuickShell overlay controls, leaving image-to-image fades disabled by default.
 - 2026-06-08: Added a persistent full-resolution video poster bridge beneath mpvpaper; video-to-image now stops playback first and uses the image backend's native poster-to-image transition.
 - 2026-06-08: Made transition-time video shutdown non-blocking so image and video handoffs no longer wait through mpvpaper's graceful-stop timeout.
+- 2026-06-08: Changed close-after-set GUI behavior to close immediately after submitting the request while the switch completes in a detached worker thread.
 - 2026-06-08: Moved the example QuickShell fade to the background layer so foreground applications and desktop UI remain visible.
 - 2026-06-08: Added `wallmuxctl color-source` for backend-independent palette source lookup, including video thumbnail generation and monitor selection.
 - 2026-06-08: Added global profile before/after switch hooks with GUI autosave and deterministic global/parent/profile execution order.
