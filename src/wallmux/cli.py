@@ -21,6 +21,7 @@ from wallmux.core.cache import (
     format_cache_stats,
     rebuild_cache,
 )
+from wallmux.core.colors import ColorSourceError, current_color_source
 from wallmux.core.config import load_config, user_config_file, write_config
 from wallmux.core.doctor import doctor_report_json, format_doctor_report, run_doctor
 from wallmux.core.ipc import DaemonUnavailable, send_request
@@ -72,6 +73,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     monitors = subparsers.add_parser("monitors", help="List Hyprland monitors.")
     monitors.set_defaults(command="monitors")
+
+    color_source = subparsers.add_parser(
+        "color-source",
+        help="Print the current image path to use for color generation.",
+    )
+    color_source.add_argument(
+        "--monitor",
+        help="Use a specific monitor instead of the first monitor reported by Hyprland.",
+    )
 
     set_cmd = subparsers.add_parser("set", help="Set a wallpaper.")
     set_cmd.add_argument("file", type=Path)
@@ -245,6 +255,15 @@ def main(argv: list[str] | None = None) -> int:
         for monitor in list_monitors():
             marker = " focused" if monitor.focused else ""
             print(f"{monitor.name}{marker}")
+        return 0
+
+    if args.command == "color-source":
+        try:
+            source = current_color_source(args.monitor)
+        except ColorSourceError as error:
+            print(f"wallmuxctl: {error}", file=sys.stderr)
+            return 1
+        print(source)
         return 0
 
     if args.command == "set":

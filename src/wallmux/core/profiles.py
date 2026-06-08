@@ -215,6 +215,9 @@ def profile_matches_filters(profile: Profile | None, item: Any) -> bool:
 def run_profile_hooks(stage: str, config: Mapping[str, Any], profile: Profile) -> None:
     profiles = _profiles_for_hook_stage(config, profile)
     commands: list[tuple[Profile, str]] = []
+    global_commands = _global_profile_hook_commands(stage, config)
+    if stage == "before_switch":
+        commands.extend((profile, command) for command in global_commands)
     for selected_profile in profiles:
         profile_commands = (
             selected_profile.before_switch
@@ -222,6 +225,8 @@ def run_profile_hooks(stage: str, config: Mapping[str, Any], profile: Profile) -
             else selected_profile.after_switch
         )
         commands.extend((selected_profile, command) for command in profile_commands)
+    if stage == "after_switch":
+        commands.extend((profile, command) for command in global_commands)
     if not commands:
         return
     timeout = float(config.get("hooks", {}).get("timeout_seconds", 30))
@@ -296,6 +301,16 @@ def _profiles_for_hook_stage(config: Mapping[str, Any], profile: Profile) -> lis
     if parent is None:
         return [profile]
     return [parent, profile]
+
+
+def _global_profile_hook_commands(
+    stage: str,
+    config: Mapping[str, Any],
+) -> tuple[str, ...]:
+    commands = profiles_config(config).get(stage, [])
+    if not isinstance(commands, list):
+        return ()
+    return tuple(str(command) for command in commands)
 
 
 def profile_log_file() -> Path:

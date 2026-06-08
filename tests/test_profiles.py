@@ -214,6 +214,42 @@ def test_profile_hooks_can_include_parent_hooks(monkeypatch) -> None:
     assert calls == ["parent green", "child Anime"]
 
 
+def test_profile_hooks_include_global_hooks_in_switch_order(monkeypatch) -> None:
+    calls = []
+
+    def run(command, **_kwargs):
+        calls.append(command)
+        return type("Result", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+
+    monkeypatch.setattr("wallmux.core.profiles.subprocess.run", run)
+    config = {
+        "hooks": {"timeout_seconds": 30},
+        "profiles": {
+            "before_switch": ["global-before {profile}"],
+            "after_switch": ["global-after {profile}"],
+            "entries": [
+                {
+                    "name": "green",
+                    "before_switch": ["profile-before {profile}"],
+                    "after_switch": ["profile-after {profile}"],
+                },
+            ],
+        },
+    }
+    profile = find_profile(config, name="green")
+    assert profile is not None
+
+    run_profile_hooks("before_switch", config, profile)
+    run_profile_hooks("after_switch", config, profile)
+
+    assert calls == [
+        "global-before green",
+        "profile-before green",
+        "profile-after green",
+        "global-after green",
+    ]
+
+
 def test_profile_hooks_export_profile_environment(monkeypatch) -> None:
     envs = []
 

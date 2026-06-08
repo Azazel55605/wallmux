@@ -35,7 +35,10 @@ Review every path near the top of the script before using it.
 
 Wallpaper hooks live in `config.toml` under `[hooks]` and receive wallpaper placeholders such as `{file}`, `{monitor}`, and `{source_for_colors}`.
 
-Profile hooks live in `wallmux-profiles.toml` as `before_switch` or `after_switch` commands and receive profile placeholders such as `{profile}`, `{category}`, `{subcategory}`, `{color}`, `{label}`, and `{wallpaper_dirs}`.
+Profile hooks live in `wallmux-profiles.toml` as global or per-profile
+`before_switch` and `after_switch` commands. They receive profile placeholders
+such as `{profile}`, `{category}`, `{subcategory}`, `{color}`, `{label}`, and
+`{wallpaper_dirs}`.
 
 Wallmux also exports these variables for profile hooks:
 

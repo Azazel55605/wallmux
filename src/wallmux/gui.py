@@ -334,6 +334,12 @@ class WallmuxWindow(QMainWindow):
         self.profile_autosave_timer.setSingleShot(True)
         self.profile_autosave_timer.setInterval(700)
         self.profile_autosave_timer.timeout.connect(self.autosave_profile_settings)
+        self.global_profile_hooks_autosave_timer = QTimer(self)
+        self.global_profile_hooks_autosave_timer.setSingleShot(True)
+        self.global_profile_hooks_autosave_timer.setInterval(700)
+        self.global_profile_hooks_autosave_timer.timeout.connect(
+            self.autosave_global_profile_hooks
+        )
 
         self.setWindowFlag(Qt.WindowType.Dialog, True)
         self.setWindowTitle(WINDOW_TITLE)
@@ -865,6 +871,10 @@ class WallmuxWindow(QMainWindow):
         self.profile_before_switch_edit.setMinimumHeight(65)
         self.profile_after_switch_edit = QTextEdit()
         self.profile_after_switch_edit.setMinimumHeight(65)
+        self.global_profile_before_switch_edit = QTextEdit()
+        self.global_profile_before_switch_edit.setMinimumHeight(65)
+        self.global_profile_after_switch_edit = QTextEdit()
+        self.global_profile_after_switch_edit.setMinimumHeight(65)
         self.profile_include_parent_hooks_check = QCheckBox("Include parent profile hooks")
         self.profile_include_parent_hooks_check.setToolTip(
             "When this is a subprofile, run the parent profile hooks first."
@@ -955,7 +965,24 @@ class WallmuxWindow(QMainWindow):
         filters_profile_layout.addLayout(filters_profile_form)
         filters_profile_layout.addStretch(1)
 
-        hooks_profile_form = QFormLayout()
+        global_hooks_group = QGroupBox("Global Profile Hooks")
+        global_hooks_form = QFormLayout(global_hooks_group)
+        global_hooks_form.addRow(
+            _form_label(
+                "Before Switch",
+                "Commands run before every profile switch.",
+            ),
+            self.global_profile_before_switch_edit,
+        )
+        global_hooks_form.addRow(
+            _form_label(
+                "After Switch",
+                "Commands run after every profile switch.",
+            ),
+            self.global_profile_after_switch_edit,
+        )
+        profile_hooks_group = QGroupBox("Selected Profile Hooks")
+        hooks_profile_form = QFormLayout(profile_hooks_group)
         hooks_profile_form.addRow("", self.profile_include_parent_hooks_check)
         hooks_profile_form.addRow(
             _form_label("Before Switch", "Commands run before this profile becomes active."),
@@ -965,7 +992,8 @@ class WallmuxWindow(QMainWindow):
             _form_label("After Switch", "Commands run after this profile becomes active."),
             self.profile_after_switch_edit,
         )
-        hooks_profile_layout.addLayout(hooks_profile_form)
+        hooks_profile_layout.addWidget(global_hooks_group)
+        hooks_profile_layout.addWidget(profile_hooks_group)
         hooks_profile_layout.addStretch(1)
 
         profile_tabs.addTab(identity_profile_page, "Identity")
@@ -1847,6 +1875,12 @@ class WallmuxWindow(QMainWindow):
         self.profile_before_switch_edit.textChanged.connect(self.schedule_profile_autosave)
         self.profile_after_switch_edit.textChanged.connect(self.schedule_profile_autosave)
         self.profile_include_parent_hooks_check.toggled.connect(self.schedule_profile_autosave)
+        self.global_profile_before_switch_edit.textChanged.connect(
+            self.schedule_global_profile_hooks_autosave
+        )
+        self.global_profile_after_switch_edit.textChanged.connect(
+            self.schedule_global_profile_hooks_autosave
+        )
 
     def choose_profile_color(self) -> None:
         current = QColor(self.profile_color_edit.text().strip())
@@ -1962,6 +1996,27 @@ class WallmuxWindow(QMainWindow):
             )
             _apply_profile_swatch(current_item, str(entries[row].get("color", "")))
         self.status.showMessage("Profile autosaved", 2500)
+
+    def schedule_global_profile_hooks_autosave(self) -> None:
+        if self.profile_settings_loading:
+            return
+        self.global_profile_hooks_autosave_timer.start()
+
+    def autosave_global_profile_hooks(self) -> None:
+        profiles = self.config.setdefault("profiles", {})
+        profiles["before_switch"] = self._pattern_lines(
+            self.global_profile_before_switch_edit
+        )
+        profiles["after_switch"] = self._pattern_lines(
+            self.global_profile_after_switch_edit
+        )
+        write_config(self.config, user_config_file())
+        self.config = load_config()
+        try:
+            send_request({"command": "reload"})
+        except DaemonUnavailable:
+            pass
+        self.status.showMessage("Global profile hooks autosaved", 2500)
 
     def set_active_profile_settings(self) -> None:
         if self.profile_autosave_timer.isActive():
@@ -2423,6 +2478,16 @@ class WallmuxWindow(QMainWindow):
     def refresh_profile_settings(self, *, select_index: int | None = None) -> None:
         profiles = self.config.setdefault("profiles", {})
         entries = profiles.setdefault("entries", [])
+        self.profile_settings_loading = True
+        try:
+            self.global_profile_before_switch_edit.setPlainText(
+                "\n".join(profiles.get("before_switch", []))
+            )
+            self.global_profile_after_switch_edit.setPlainText(
+                "\n".join(profiles.get("after_switch", []))
+            )
+        finally:
+            self.profile_settings_loading = False
         active_name = str(profiles.get("active", ""))
         active_category = str(profiles.get("active_category", ""))
         active_subcategory = str(profiles.get("active_subcategory", ""))

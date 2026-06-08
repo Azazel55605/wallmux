@@ -146,6 +146,14 @@ Supported placeholders:
 
 For images, `{source_for_colors}` is the wallpaper file. For videos, it is the generated thumbnail when available. Hook failures are logged to `~/.local/state/wallmux/hooks.log` and do not roll back wallpaper changes.
 
+Scripts can also query the current backend-independent color source directly.
+Without `--monitor`, Wallmux uses the first monitor returned by Hyprland:
+
+```bash
+wal -i "$(wallmuxctl color-source)"
+wal -i "$(wallmuxctl color-source --monitor DP-1)"
+```
+
 ## Transitions
 
 Wallmux keeps switching simple and state-aware:
@@ -197,6 +205,10 @@ Example `wallmux-profiles.toml`:
 active = "green"
 active_category = ""
 active_subcategory = ""
+before_switch = []
+after_switch = [
+  "~/.config/wallmux/hooks/global-profile-theme.sh '{profile}'"
+]
 
 [[entries]]
 name = "green"
@@ -235,7 +247,7 @@ wallmuxctl profile use green
 wallmuxctl profile use Anime --category green
 ```
 
-The GUI has a searchable tree profile picker in the browser toolbar, `Ctrl+P` opens it from within Wallmux, and `wallmux-gui profile-picker` opens only the picker as a small popup. Profiles can be created and edited under `Settings -> Profiles`, where the editor is split into Identity, Folders, Backends, Filters, and Hooks tabs. The profile settings list is shown as a tree. `Import Folder Tree` can read an existing structure such as `green/Anime` and `green/Landscape`, creating the parent/all profile and one child profile per subfolder. Child profiles can enable `include_parent_hooks` to run parent hooks before their own hooks. Switching a profile reloads `wallmuxd` when it is running.
+The GUI has a searchable tree profile picker in the browser toolbar, `Ctrl+P` opens it from within Wallmux, and `wallmux-gui profile-picker` opens only the picker as a small popup. Profiles can be created and edited under `Settings -> Profiles`, where the editor is split into Identity, Folders, Backends, Filters, and Hooks tabs. The profile settings list is shown as a tree. `Import Folder Tree` can read an existing structure such as `green/Anime` and `green/Landscape`, creating the parent/all profile and one child profile per subfolder. Child profiles can enable `include_parent_hooks` to run parent hooks before their own hooks. Global profile hooks run for every switch and can be edited at the top of the Hooks tab. Before-switch order is global, parent, profile; after-switch order is parent, profile, global. Switching a profile reloads `wallmuxd` when it is running.
 
 ### Profile Theme Hook Example
 

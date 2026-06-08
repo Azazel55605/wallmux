@@ -28,6 +28,8 @@ def test_creates_missing_config_file(tmp_path: Path) -> None:
         "active": "",
         "active_category": "",
         "active_subcategory": "",
+        "before_switch": [],
+        "after_switch": [],
         "entries": [],
     }
 
@@ -213,6 +215,8 @@ def test_write_config_splits_profiles_to_profile_file(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config = load_config(config_path)
     config["profiles"]["active"] = "orange"
+    config["profiles"]["before_switch"] = ["echo global before"]
+    config["profiles"]["after_switch"] = ["echo global after"]
     config["profiles"]["entries"] = [
         {
             "name": "orange",
@@ -229,6 +233,8 @@ def test_write_config_splits_profiles_to_profile_file(tmp_path: Path) -> None:
     )
     assert "profiles" not in written_config
     assert written_profiles["active"] == "orange"
+    assert written_profiles["before_switch"] == ["echo global before"]
+    assert written_profiles["after_switch"] == ["echo global after"]
     assert written_profiles["entries"][0]["after_switch"] == ["echo orange"]
     assert written_profiles["entries"][0]["color"] == ""
 

@@ -6,6 +6,12 @@
 active = "Anime"
 active_category = "green"
 active_subcategory = "Anime"
+before_switch = [
+  "notify-send -a Wallmux -i wallmux-gui 'Profile switching' '{label}'"
+]
+after_switch = [
+  "~/.config/wallmux/hooks/global-profile-theme.sh '{profile}'"
+]
 
 [[entries]]
 name = "green"

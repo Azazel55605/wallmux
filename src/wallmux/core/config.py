@@ -28,6 +28,8 @@ DEFAULT_PROFILES_CONFIG: dict[str, Any] = {
     "active": "",
     "active_category": "",
     "active_subcategory": "",
+    "before_switch": [],
+    "after_switch": [],
     "entries": [],
 }
 PROFILE_ENTRY_DEFAULT: dict[str, Any] = {
