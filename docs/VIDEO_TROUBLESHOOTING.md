@@ -66,3 +66,19 @@ If flicker remains, test these one at a time:
 5. Check whether the source itself contains black frames around its loop boundary.
 
 mpv documents `video-sync=audio` as the most robust timing mode when audio is disabled, using the system clock. mpvpaper also has an upstream open issue for black flashes, so not every flicker can be corrected inside Wallmux.
+
+## Loop-Boundary Flicker
+
+Enable loop-friendly encoding under Settings > Video Optimization to create
+derivatives with constant frame pacing, closed GOPs, and no B-frames:
+
+```toml
+[video_optimization]
+loop_friendly = true
+loop_gop_size = 60
+```
+
+This makes seeking back to the first frame cheaper and reduces decoder flicker
+at loop boundaries. It slightly increases file size and forces a derivative
+even when the original video already matches the selected codec and resolution.
+It cannot hide a visible seam that is encoded into the source video itself.

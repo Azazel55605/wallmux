@@ -121,6 +121,8 @@ max_height = 1440
 max_bit_rate = 45000000
 crf = 22
 preset = "medium"
+loop_friendly = true
+loop_gop_size = 60
 extra_args = ["-pix_fmt", "yuv420p", "-movflags", "+faststart"]
 
 [cache]

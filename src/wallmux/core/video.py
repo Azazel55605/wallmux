@@ -31,6 +31,8 @@ VIDEO_OPTIMIZATION_PROFILES: dict[str, dict[str, Any]] = {
         "max_bit_rate": 25_000_000,
         "crf": 23,
         "preset": "veryfast",
+        "loop_friendly": False,
+        "loop_gop_size": 60,
         "extra_args": ["-pix_fmt", "yuv420p", "-movflags", "+faststart"],
     },
     "balanced": {
@@ -43,6 +45,8 @@ VIDEO_OPTIMIZATION_PROFILES: dict[str, dict[str, Any]] = {
         "max_bit_rate": 45_000_000,
         "crf": 22,
         "preset": "medium",
+        "loop_friendly": False,
+        "loop_gop_size": 60,
         "extra_args": ["-pix_fmt", "yuv420p", "-movflags", "+faststart"],
     },
     "quality": {
@@ -55,6 +59,8 @@ VIDEO_OPTIMIZATION_PROFILES: dict[str, dict[str, Any]] = {
         "max_bit_rate": 80_000_000,
         "crf": 20,
         "preset": "slow",
+        "loop_friendly": False,
+        "loop_gop_size": 60,
         "extra_args": ["-pix_fmt", "yuv420p", "-movflags", "+faststart"],
     },
 }
@@ -212,6 +218,7 @@ def plan_video_optimization(
         profile=profile,
         extension=settings["extension"],
         cache_dir=cache_dir,
+        settings_signature=_optimization_settings_signature(settings),
     )
     reasons = tuple(_optimization_reasons(metadata, settings))
     command = tuple(_ffmpeg_optimization_command(path, output, settings))
@@ -338,18 +345,23 @@ def optimized_video_for_source(path: Path, config: dict[str, Any]) -> Path | Non
 
 
 def cached_optimized_video_for_source(path: Path, config: dict[str, Any]) -> Path | None:
-    profile = configured_video_profile(config)
-    settings = _optimization_profile_settings(profile, config)
-    candidate = optimized_video_path(
-        path,
-        profile=profile,
-        extension=str(settings["extension"]),
-        cache_dir=configured_video_cache_dir(config),
-    )
+    candidate = configured_optimized_video_path(path, config)
     metadata_path = optimized_video_metadata_path(candidate)
     if candidate.exists() and metadata_path.exists():
         return candidate
     return None
+
+
+def configured_optimized_video_path(path: Path, config: dict[str, Any]) -> Path:
+    profile = configured_video_profile(config)
+    settings = _optimization_profile_settings(profile, config)
+    return optimized_video_path(
+        path,
+        profile=profile,
+        extension=str(settings["extension"]),
+        cache_dir=configured_video_cache_dir(config),
+        settings_signature=_optimization_settings_signature(settings),
+    )
 
 
 def optimized_video_path(
@@ -358,12 +370,15 @@ def optimized_video_path(
     profile: str,
     extension: str,
     cache_dir: Path | None = None,
+    settings_signature: str = "",
 ) -> Path:
     try:
         stat = path.stat()
-        fingerprint = f"{path.resolve()}:{stat.st_mtime_ns}:{stat.st_size}:{profile}"
+        fingerprint = (
+            f"{path.resolve()}:{stat.st_mtime_ns}:{stat.st_size}:{profile}:{settings_signature}"
+        )
     except OSError:
-        fingerprint = f"{path}:{profile}"
+        fingerprint = f"{path}:{profile}:{settings_signature}"
     digest = sha256(fingerprint.encode("utf-8")).hexdigest()[:24]
     return (cache_dir or video_cache_dir()) / profile / f"{path.stem}-{digest}{extension}"
 
@@ -627,6 +642,8 @@ def _optimization_reasons(metadata: VideoMetadata, settings: dict[str, Any]) -> 
         reasons.append(
             f"bitrate {_format_bitrate(metadata.bit_rate)} exceeds {_format_bitrate(max_bit_rate)}"
         )
+    if bool(settings.get("loop_friendly", False)):
+        reasons.append("loop-friendly derivative requested")
     return reasons
 
 
@@ -651,6 +668,8 @@ def _optimization_profile_settings(
             "max_bit_rate",
             "crf",
             "preset",
+            "loop_friendly",
+            "loop_gop_size",
             "extra_args",
         ):
             if key in video_config:
@@ -672,7 +691,7 @@ def _ffmpeg_optimization_command(path: Path, output: Path, settings: dict[str, A
         f"scale='min({settings['max_width']},iw)':"
         f"'min({settings['max_height']},ih)':force_original_aspect_ratio=decrease"
     )
-    return [
+    command = [
         "ffmpeg",
         "-hide_banner",
         "-v",
@@ -681,20 +700,49 @@ def _ffmpeg_optimization_command(path: Path, output: Path, settings: dict[str, A
         "-progress",
         "pipe:1",
         "-y",
-        "-i",
-        str(path),
-        "-an",
-        "-vf",
-        scale,
-        "-c:v",
-        str(settings["codec"]),
-        "-preset",
-        str(settings["preset"]),
-        "-crf",
-        str(settings["crf"]),
-        *_extra_ffmpeg_args(settings.get("extra_args", [])),
-        str(output),
     ]
+    command.extend(
+        [
+            "-i",
+            str(path),
+            "-an",
+            "-vf",
+            scale,
+            "-c:v",
+            str(settings["codec"]),
+            "-preset",
+            str(settings["preset"]),
+            "-crf",
+            str(settings["crf"]),
+        ]
+    )
+    if bool(settings.get("loop_friendly", False)):
+        gop_size = max(1, int(settings.get("loop_gop_size", 60)))
+        command.extend(["-bf", "0", "-g", str(gop_size), "-fps_mode", "cfr"])
+        if str(settings["codec"]) == "libx264":
+            command.extend(
+                [
+                    "-keyint_min",
+                    str(gop_size),
+                    "-sc_threshold",
+                    "0",
+                    "-x264-params",
+                    "open-gop=0",
+                ]
+            )
+    command.extend(_extra_ffmpeg_args(settings.get("extra_args", [])))
+    command.append(str(output))
+    return command
+
+
+def _optimization_settings_signature(settings: dict[str, Any]) -> str:
+    normalized = {
+        key: sorted(value) if isinstance(value, set) else value
+        for key, value in settings.items()
+    }
+    return sha256(
+        json.dumps(normalized, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:16]
 
 
 def _extra_ffmpeg_args(value: Any) -> list[str]:

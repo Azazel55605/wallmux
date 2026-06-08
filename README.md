@@ -357,6 +357,10 @@ Available hardware-decoding modes are `automatic` (`hwdec=auto-safe`), `software
 
 Automatic video optimization is daemon-owned. `wallmuxd` scans the active profile/library after startup, reloads, and periodically, running at most two ffmpeg jobs simultaneously. Progress is available through replaceable desktop notifications, `wallmuxctl state`, the GUI State tab, and thumbnail overlays while the GUI is open.
 
+Loop-friendly optimization is enabled by default. It creates closed-GOP,
+constant-frame-rate derivatives without B-frames to reduce decoder flicker when
+video wallpapers seek back to their first frame.
+
 See `docs/VIDEO_TROUBLESHOOTING.md` for video-to-image handoff settings and black-frame troubleshooting.
 
 Optional transition effect helpers can call external commands for fade overlays, screenshot bridges, or QuickShell integration. They are disabled by default:

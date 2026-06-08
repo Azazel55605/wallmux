@@ -336,6 +336,7 @@ Record notable checks here as the project moves.
 - 2026-06-08: Moved the example QuickShell fade to the background layer so foreground applications and desktop UI remain visible.
 - 2026-06-08: Added `wallmuxctl color-source` for backend-independent palette source lookup, including video thumbnail generation and monitor selection.
 - 2026-06-08: Added global profile before/after switch hooks with GUI autosave and deterministic global/parent/profile execution order.
+- 2026-06-08: Added default loop-friendly video optimization using closed GOPs, constant frame pacing, no B-frames, and cache identities tied to encoder settings.
 - 2026-05-26: Added GUI profile configuration for editing profile metadata, folders, backend rules, autoswitch behavior, filters, and profile switch hooks.
 - 2026-05-26: Improved profile GUI setup with folder picker controls and clearer category/subcategory guidance.
 - 2026-05-26: Added profile category import from existing folder structures, creating one profile per child folder such as `green/Anime` and `green/Landscape`.

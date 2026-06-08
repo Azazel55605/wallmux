@@ -1274,6 +1274,12 @@ class WallmuxWindow(QMainWindow):
         self.video_crf_spin = QSpinBox()
         self.video_crf_spin.setRange(0, 51)
         self.video_preset_edit = QLineEdit()
+        self.video_loop_friendly_check = QCheckBox("Loop-friendly encoding")
+        self.video_loop_friendly_check.setToolTip(
+            "Encode closed GOPs without B-frames to reduce decoder flicker at loop boundaries."
+        )
+        self.video_loop_gop_spin = QSpinBox()
+        self.video_loop_gop_spin.setRange(1, 1000)
         self.video_extra_args_edit = QLineEdit()
         video_form.addRow("", self.video_opt_enabled_check)
         video_form.addRow("", self.video_prefer_optimized_check)
@@ -1312,6 +1318,14 @@ class WallmuxWindow(QMainWindow):
         )
         video_form.addRow(_form_label("CRF", "ffmpeg CRF quality value."), self.video_crf_spin)
         video_form.addRow(_form_label("Preset", "ffmpeg encoder preset."), self.video_preset_edit)
+        video_form.addRow("", self.video_loop_friendly_check)
+        video_form.addRow(
+            _form_label(
+                "Loop GOP Size",
+                "Frames between loop-friendly keyframes. 60 is suitable for most wallpapers.",
+            ),
+            self.video_loop_gop_spin,
+        )
         video_form.addRow(
             _form_label("Extra Args", "Additional ffmpeg arguments, shell-style."),
             self.video_extra_args_edit,
@@ -2162,6 +2176,8 @@ class WallmuxWindow(QMainWindow):
             "max_bit_rate": self.video_max_bitrate_spin.value() * 1_000_000,
             "crf": self.video_crf_spin.value(),
             "preset": self.video_preset_edit.text(),
+            "loop_friendly": self.video_loop_friendly_check.isChecked(),
+            "loop_gop_size": self.video_loop_gop_spin.value(),
             "extra_args": self.video_extra_args_edit.text(),
         }
         write_config(self.config, user_config_file())
@@ -2927,6 +2943,8 @@ class WallmuxWindow(QMainWindow):
         )
         self.video_crf_spin.setValue(int(video.get("crf", 22)))
         self.video_preset_edit.setText(str(video.get("preset", "medium")))
+        self.video_loop_friendly_check.setChecked(bool(video.get("loop_friendly", True)))
+        self.video_loop_gop_spin.setValue(int(video.get("loop_gop_size", 60)))
         extra_args = video.get("extra_args", ["-pix_fmt", "yuv420p", "-movflags", "+faststart"])
         if isinstance(extra_args, list):
             extra_args = " ".join(str(item) for item in extra_args)

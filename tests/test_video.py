@@ -178,6 +178,80 @@ def test_plan_video_optimization_explains_transcode_reasons(
     assert "libx264" in plan.ffmpeg_command
 
 
+def test_loop_friendly_optimization_adds_seek_friendly_encoding_flags(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "wallpaper.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(
+        "wallmux.core.video.probe_video",
+        lambda path: probe_video_from_data(
+            path=path,
+            codec="h264",
+            container="mp4",
+            width=1920,
+            height=1080,
+            bit_rate=20_000_000,
+        ),
+    )
+    config = {
+        "video_optimization": {
+            "profile": "balanced",
+            "loop_friendly": True,
+            "loop_gop_size": 48,
+        }
+    }
+
+    plan = plan_video_optimization(
+        source,
+        profile="balanced",
+        cache_dir=tmp_path,
+        config=config,
+    )
+
+    assert plan.already_suitable is False
+    assert "loop-friendly derivative requested" in plan.reasons
+    for option in ("-bf", "-g", "-fps_mode", "-keyint_min", "-sc_threshold", "-x264-params"):
+        assert option in plan.ffmpeg_command
+    assert plan.ffmpeg_command[plan.ffmpeg_command.index("-g") + 1] == "48"
+    assert plan.ffmpeg_command[plan.ffmpeg_command.index("-bf") + 1] == "0"
+
+
+def test_optimized_video_path_changes_with_optimization_settings(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "wallpaper.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(
+        "wallmux.core.video.probe_video",
+        lambda path: probe_video_from_data(
+            path=path,
+            codec="h264",
+            container="mp4",
+            width=1920,
+            height=1080,
+            bit_rate=20_000_000,
+        ),
+    )
+
+    regular = plan_video_optimization(
+        source,
+        profile="balanced",
+        cache_dir=tmp_path,
+        config={"video_optimization": {"profile": "balanced", "loop_friendly": False}},
+    )
+    loop_friendly = plan_video_optimization(
+        source,
+        profile="balanced",
+        cache_dir=tmp_path,
+        config={"video_optimization": {"profile": "balanced", "loop_friendly": True}},
+    )
+
+    assert regular.output != loop_friendly.output
+
+
 def test_optimized_video_path_changes_when_source_changes(tmp_path: Path) -> None:
     source = tmp_path / "wallpaper.mp4"
     source.write_bytes(b"one")

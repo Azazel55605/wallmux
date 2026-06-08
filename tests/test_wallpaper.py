@@ -158,25 +158,20 @@ def test_set_video_starts_mpvpaper_and_saves_pid(tmp_path: Path) -> None:
 
 
 def test_set_video_prefers_cached_optimized_video(tmp_path: Path) -> None:
-    from wallmux.core.video import optimized_video_metadata_path, optimized_video_path
+    from wallmux.core.video import configured_optimized_video_path, optimized_video_metadata_path
 
     runner = FakeRunner()
     state_path = tmp_path / "state.json"
     video = tmp_path / "wallpaper.webm"
     video.write_bytes(b"")
     cache = tmp_path / "optimized"
-    optimized = optimized_video_path(
-        video,
-        profile="balanced",
-        extension=".mp4",
-        cache_dir=cache,
-    ).resolve()
-    optimized.parent.mkdir(parents=True)
-    optimized.write_bytes(b"optimized")
-    optimized_video_metadata_path(optimized).write_text("{}", encoding="utf-8")
     config = sample_config(tmp_path)
     config["video_optimization"]["prefer_optimized"] = True
     config["video_optimization"]["cache_dir"] = str(cache)
+    optimized = configured_optimized_video_path(video, config).resolve()
+    optimized.parent.mkdir(parents=True)
+    optimized.write_bytes(b"optimized")
+    optimized_video_metadata_path(optimized).write_text("{}", encoding="utf-8")
 
     result = set_wallpaper(
         video,
