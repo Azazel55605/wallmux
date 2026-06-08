@@ -50,6 +50,7 @@ def test_runs_configured_transition_effects(monkeypatch, tmp_path: Path) -> None
     assert calls == [
         f"shot /tmp/old.png {tmp_path / 'next.mp4'}",
         "qs before mpvpaper",
+        "qs after mpvpaper",
         "fade DP-1 image_to_video",
     ]
 
@@ -58,7 +59,8 @@ def test_transition_effects_are_disabled_by_default(monkeypatch, tmp_path: Path)
     calls: list[str] = []
     monkeypatch.setattr(
         "wallmux.core.transition_effects.subprocess.run",
-        lambda command, **kwargs: calls.append(command),
+        lambda command, **kwargs: calls.append(command)
+        or Mock(returncode=0, stderr="", stdout=""),
     )
     context = TransitionContext(
         monitor="DP-1",
@@ -71,3 +73,68 @@ def test_transition_effects_are_disabled_by_default(monkeypatch, tmp_path: Path)
     run_transition_stage("after", {"transitions": {}}, context)
 
     assert calls == []
+
+
+def test_quickshell_overlay_skips_image_to_image_by_default(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "wallmux.core.transition_effects.subprocess.run",
+        lambda command, **kwargs: calls.append(command)
+        or Mock(returncode=0, stderr="", stdout=""),
+    )
+    config = {
+        "transitions": {
+            "effects": {
+                "quickshell_overlay": True,
+                "quickshell_command": "qs {stage} {transition}",
+            }
+        }
+    }
+    context = TransitionContext(
+        monitor="DP-1",
+        to_file=tmp_path / "next.png",
+        to_backend="awww",
+        transition=TransitionKind.IMAGE_TO_IMAGE,
+    )
+
+    logger = Mock()
+    run_transition_stage("before", config, context, logger=logger)
+    run_transition_stage("after", config, context, logger=logger)
+
+    assert calls == []
+
+
+def test_quickshell_overlay_can_enable_image_to_image(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "wallmux.core.transition_effects.subprocess.run",
+        lambda command, **kwargs: calls.append(command)
+        or Mock(returncode=0, stderr="", stdout=""),
+    )
+    config = {
+        "transitions": {
+            "effects": {
+                "quickshell_overlay": True,
+                "quickshell_command": "qs {stage} {transition}",
+                "quickshell_transitions": ["image_to_image"],
+            }
+        }
+    }
+    context = TransitionContext(
+        monitor="DP-1",
+        to_file=tmp_path / "next.png",
+        to_backend="awww",
+        transition=TransitionKind.IMAGE_TO_IMAGE,
+    )
+
+    logger = Mock()
+    run_transition_stage("before", config, context, logger=logger)
+    run_transition_stage("after", config, context, logger=logger)
+
+    assert calls == ["qs before image_to_image", "qs after image_to_image"]

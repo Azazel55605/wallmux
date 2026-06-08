@@ -1403,9 +1403,17 @@ class WallmuxWindow(QMainWindow):
         self.video_to_image_settle_spin.setRange(0.0, 10.0)
         self.video_to_image_settle_spin.setSingleStep(0.1)
         self.video_to_image_settle_spin.setDecimals(1)
+        self.video_start_settle_spin = QDoubleSpinBox()
+        self.video_start_settle_spin.setRange(0.0, 10.0)
+        self.video_start_settle_spin.setSingleStep(0.1)
+        self.video_start_settle_spin.setDecimals(1)
         self.fade_overlay_check = QCheckBox("Fade overlay")
         self.screenshot_bridge_check = QCheckBox("Screenshot bridge")
         self.quickshell_overlay_check = QCheckBox("QuickShell overlay")
+        self.quickshell_image_to_image_check = QCheckBox("Image to image")
+        self.quickshell_image_to_video_check = QCheckBox("Image to video")
+        self.quickshell_video_to_image_check = QCheckBox("Video to image")
+        self.quickshell_video_to_video_check = QCheckBox("Video to video")
         self.fade_command_edit = QLineEdit()
         self.screenshot_command_edit = QLineEdit()
         self.quickshell_command_edit = QLineEdit()
@@ -1422,6 +1430,13 @@ class WallmuxWindow(QMainWindow):
                 "Seconds to keep the video visible while the next image finishes loading.",
             ),
             self.video_to_image_settle_spin,
+        )
+        transition_form.addRow(
+            _form_label(
+                "Video Start Settle",
+                "Seconds to keep an overlay opaque while a new video renders its first frame.",
+            ),
+            self.video_start_settle_spin,
         )
         transition_form.addRow("", self.fade_overlay_check)
         transition_form.addRow(
@@ -1446,6 +1461,19 @@ class WallmuxWindow(QMainWindow):
                 "Optional external command used to trigger a QuickShell overlay/helper.",
             ),
             self.quickshell_command_edit,
+        )
+        quickshell_transition_checks = QHBoxLayout()
+        quickshell_transition_checks.addWidget(self.quickshell_image_to_image_check)
+        quickshell_transition_checks.addWidget(self.quickshell_image_to_video_check)
+        quickshell_transition_checks.addWidget(self.quickshell_video_to_image_check)
+        quickshell_transition_checks.addWidget(self.quickshell_video_to_video_check)
+        quickshell_transition_checks.addStretch(1)
+        transition_form.addRow(
+            _form_label(
+                "QuickShell transitions",
+                "Choose which wallpaper transition kinds use the QuickShell overlay.",
+            ),
+            quickshell_transition_checks,
         )
         transition_form.addRow(
             _form_label(
@@ -2959,12 +2987,31 @@ class WallmuxWindow(QMainWindow):
         self.video_to_image_settle_spin.setValue(
             float(basic.get("video_to_image_settle_seconds", 0.9))
         )
+        self.video_start_settle_spin.setValue(
+            float(basic.get("video_start_settle_seconds", 0.6))
+        )
         self.fade_overlay_check.setChecked(bool(effects.get("fade_overlay", False)))
         self.fade_command_edit.setText(str(effects.get("fade_command", "")))
         self.screenshot_bridge_check.setChecked(bool(effects.get("screenshot_bridge", False)))
         self.screenshot_command_edit.setText(str(effects.get("screenshot_command", "")))
         self.quickshell_overlay_check.setChecked(bool(effects.get("quickshell_overlay", False)))
         self.quickshell_command_edit.setText(str(effects.get("quickshell_command", "")))
+        quickshell_transitions = effects.get(
+            "quickshell_transitions",
+            ["image_to_video", "video_to_image", "video_to_video"],
+        )
+        self.quickshell_image_to_image_check.setChecked(
+            "image_to_image" in quickshell_transitions
+        )
+        self.quickshell_image_to_video_check.setChecked(
+            "image_to_video" in quickshell_transitions
+        )
+        self.quickshell_video_to_image_check.setChecked(
+            "video_to_image" in quickshell_transitions
+        )
+        self.quickshell_video_to_video_check.setChecked(
+            "video_to_video" in quickshell_transitions
+        )
         self.transition_effect_timeout_spin.setValue(float(effects.get("timeout_seconds", 2.0)))
 
     def save_transition_settings(self) -> None:
@@ -2973,6 +3020,7 @@ class WallmuxWindow(QMainWindow):
             "enabled": self.basic_transitions_check.isChecked(),
             "set_image_before_stopping_video": self.basic_image_bridge_check.isChecked(),
             "video_to_image_settle_seconds": self.video_to_image_settle_spin.value(),
+            "video_start_settle_seconds": self.video_start_settle_spin.value(),
         }
         transitions["effects"] = {
             "fade_overlay": self.fade_overlay_check.isChecked(),
@@ -2981,6 +3029,16 @@ class WallmuxWindow(QMainWindow):
             "screenshot_command": self.screenshot_command_edit.text(),
             "quickshell_overlay": self.quickshell_overlay_check.isChecked(),
             "quickshell_command": self.quickshell_command_edit.text(),
+            "quickshell_transitions": [
+                transition
+                for transition, checkbox in (
+                    ("image_to_image", self.quickshell_image_to_image_check),
+                    ("image_to_video", self.quickshell_image_to_video_check),
+                    ("video_to_image", self.quickshell_video_to_image_check),
+                    ("video_to_video", self.quickshell_video_to_video_check),
+                )
+                if checkbox.isChecked()
+            ],
             "timeout_seconds": self.transition_effect_timeout_spin.value(),
         }
         write_config(self.config, user_config_file())

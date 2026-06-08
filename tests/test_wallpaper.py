@@ -47,6 +47,7 @@ def sample_config(tmp_path: Path) -> dict:
     config["hooks"]["before_set"] = []
     config["hooks"]["after_set"] = []
     config["transitions"]["basic"]["video_to_image_settle_seconds"] = 0.0
+    config["transitions"]["basic"]["video_start_settle_seconds"] = 0.0
     return config
 
 
@@ -585,6 +586,74 @@ def test_video_to_image_waits_for_image_handoff_before_stopping_video(
     set_wallpaper(image, "DP-1", config=config, runner=runner, state_path=state_path)
 
     assert events == ["sleep:0.9", "terminate"]
+
+
+def test_video_start_waits_before_revealing_transition(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = FakeRunner()
+    video = tmp_path / "one.mp4"
+    video.write_bytes(b"")
+    events: list[str] = []
+    config = sample_config(tmp_path)
+    config["transitions"]["basic"]["video_start_settle_seconds"] = 0.6
+    monkeypatch.setattr(
+        "wallmux.core.wallpaper.run_transition_stage",
+        lambda stage, *_args: events.append(stage),
+    )
+    monkeypatch.setattr(
+        "wallmux.core.wallpaper.time.sleep",
+        lambda seconds: events.append(f"sleep:{seconds}"),
+    )
+
+    set_wallpaper(video, "DP-1", config=config, runner=runner, state_path=tmp_path / "state")
+
+    assert events == ["before", "sleep:0.6", "after"]
+
+
+def test_grouped_video_to_image_runs_one_joined_transition(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = FakeRunner()
+    state_path = tmp_path / "state.json"
+    video = tmp_path / "one.mp4"
+    image = tmp_path / "two.png"
+    video.write_bytes(b"")
+    image.write_bytes(b"")
+    config = sample_config(tmp_path)
+    calls = []
+    monkeypatch.setattr("wallmux.core.wallpaper.pid_is_alive", lambda pid: True)
+    monkeypatch.setattr("wallmux.core.wallpaper.terminate_pid", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        "wallmux.core.wallpaper.run_transition_stage",
+        lambda stage, _config, context: calls.append((stage, context)),
+    )
+    def monitors():
+        return [Monitor("DP-1"), Monitor("HDMI-A-1")]
+
+    set_wallpaper_for_all(
+        video,
+        config=config,
+        runner=runner,
+        monitor_provider=monitors,
+        state_path=state_path,
+    )
+    calls.clear()
+    set_wallpaper_for_all(
+        image,
+        config=config,
+        runner=runner,
+        monitor_provider=monitors,
+        state_path=state_path,
+    )
+
+    assert [stage for stage, _context in calls] == ["before", "after"]
+    assert all(context.monitor == "DP-1,HDMI-A-1" for _stage, context in calls)
+    assert all(
+        context.transition is TransitionKind.VIDEO_TO_IMAGE for _stage, context in calls
+    )
 
 
 def test_image_to_image_keeps_native_backend_transition(tmp_path: Path, monkeypatch) -> None:

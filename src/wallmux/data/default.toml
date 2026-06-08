@@ -138,6 +138,7 @@ kill_video_on_timeout = true
 enabled = true
 set_image_before_stopping_video = true
 video_to_image_settle_seconds = 0.9
+video_start_settle_seconds = 0.6
 
 [transitions.effects]
 fade_overlay = false
@@ -146,6 +147,7 @@ screenshot_bridge = false
 screenshot_command = ""
 quickshell_overlay = false
 quickshell_command = ""
+quickshell_transitions = ["image_to_video", "video_to_image", "video_to_video"]
 timeout_seconds = 2.0
 
 [colors]

@@ -31,9 +31,13 @@ Wallmux sets the next image underneath mpvpaper, waits briefly for the image bac
 enabled = true
 set_image_before_stopping_video = true
 video_to_image_settle_seconds = 0.9
+video_start_settle_seconds = 0.6
 ```
 
 Increase the settle time if your `awww` or `swww` transition is longer. A true fade of the mpvpaper layer itself still requires a compositor or layer-shell overlay helper because mpvpaper/libmpv does not expose layer opacity control.
+
+`video_start_settle_seconds` delays an overlay's reveal while a newly started
+video backend creates its layer and renders its first frame.
 
 ## Black Frames and Flicker
 

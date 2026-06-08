@@ -116,11 +116,14 @@ def _commands_for_stage(
             command = effects_config.get("screenshot_command", "")
             if command:
                 commands.append(command)
-        if effects_config.get("quickshell_overlay"):
-            command = effects_config.get("quickshell_command", "")
-            if command:
-                commands.append(command)
-    elif stage == "after" and effects_config.get("fade_overlay"):
+    if effects_config.get("quickshell_overlay") and _quickshell_transition_enabled(
+        effects_config,
+        transition,
+    ):
+        command = effects_config.get("quickshell_command", "")
+        if command:
+            commands.append(command)
+    if stage == "after" and effects_config.get("fade_overlay"):
         command = effects_config.get("fade_command", "")
         if command:
             commands.append(command)
@@ -133,6 +136,16 @@ def _is_cross_backend_transition(transition: TransitionKind) -> bool:
         TransitionKind.VIDEO_TO_IMAGE,
         TransitionKind.VIDEO_TO_VIDEO,
     }
+
+
+def _quickshell_transition_enabled(
+    effects_config: dict[str, Any],
+    transition: TransitionKind,
+) -> bool:
+    enabled = effects_config.get("quickshell_transitions")
+    if not isinstance(enabled, list):
+        return transition is not TransitionKind.IMAGE_TO_IMAGE
+    return transition.value in enabled
 
 
 def _build_values(stage: str, context: TransitionContext) -> dict[str, str]:

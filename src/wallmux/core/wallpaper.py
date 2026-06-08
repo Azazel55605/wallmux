@@ -205,6 +205,7 @@ def _set_wallpaper_with_backend(
         previous.pid = None
 
     pid = _execute(command, backend_name, wallpaper_type, runner)
+    _wait_for_video_start_handoff(config, wallpaper_type, backend_name)
     if previous and previous.pid and stop_video_after_image_set:
         _wait_for_video_to_image_handoff(config)
         transitions_config = config.get("transitions", {})
@@ -468,10 +469,13 @@ def _set_image_wallpaper_for_all_outputs(
 
     transitions: dict[str, TransitionKind] = {}
     pids_to_stop: list[int] = []
+    previous_entries: list[WallpaperEntry] = []
     with STATE_LOCK:
         state = load_state(state_path)
         for monitor in monitors:
             previous = state.monitors.get(monitor)
+            if previous:
+                previous_entries.append(previous)
             transition = plan_transition(previous, wallpaper_type, backend_name)
             transitions[monitor] = transition.kind
             if previous and previous.pid and not pid_is_alive(previous.pid):
@@ -481,6 +485,22 @@ def _set_image_wallpaper_for_all_outputs(
                 previous.pid = None
         save_state(state, state_path)
 
+    hook_context = HookContext(
+        file=resolved_file,
+        monitor=joined_outputs,
+        backend=backend_name,
+        wallpaper_type=wallpaper_type,
+    )
+    run_hook_stage("before_set", config, hook_context)
+    transition_context = TransitionContext(
+        monitor=joined_outputs,
+        to_file=resolved_file,
+        to_backend=backend_name,
+        transition=_grouped_transition_kind(transitions.values()),
+        previous=previous_entries[0] if previous_entries else None,
+    )
+    run_transition_stage("before", config, transition_context)
+
     stop_videos_after_image_set = bool(pids_to_stop) and _basic_image_bridge_enabled(config)
     transitions_config = config.get("transitions", {})
     if not stop_videos_after_image_set:
@@ -489,14 +509,6 @@ def _set_image_wallpaper_for_all_outputs(
             timeout_seconds=float(transitions_config.get("video_stop_timeout_seconds", 2.0)),
             kill_on_timeout=bool(transitions_config.get("kill_video_on_timeout", True)),
         )
-
-    hook_context = HookContext(
-        file=resolved_file,
-        monitor=joined_outputs,
-        backend=backend_name,
-        wallpaper_type=wallpaper_type,
-    )
-    run_hook_stage("before_set", config, hook_context)
     candidates = _backend_candidates(
         backend_name,
         wallpaper_type,
@@ -545,6 +557,7 @@ def _set_image_wallpaper_for_all_outputs(
             )
         save_state(state, state_path)
 
+    run_transition_stage("after", config, transition_context)
     run_hook_stage(
         "after_set",
         config,
@@ -601,6 +614,34 @@ def _wait_for_video_to_image_handoff(config: dict) -> None:
     delay = max(0.0, float(basic_config.get("video_to_image_settle_seconds", 0.9)))
     if delay:
         time.sleep(delay)
+
+
+def _wait_for_video_start_handoff(
+    config: dict,
+    wallpaper_type: WallpaperType,
+    backend_name: str,
+) -> None:
+    if wallpaper_type is not WallpaperType.VIDEO and backend_name not in {
+        "mpvpaper",
+        "gslapper",
+    }:
+        return
+    basic_config = config.get("transitions", {}).get("basic", {})
+    delay = max(0.0, float(basic_config.get("video_start_settle_seconds", 0.6)))
+    if delay:
+        time.sleep(delay)
+
+
+def _grouped_transition_kind(transitions) -> TransitionKind:
+    transition_set = set(transitions)
+    for kind in (
+        TransitionKind.VIDEO_TO_IMAGE,
+        TransitionKind.IMAGE_TO_IMAGE,
+        TransitionKind.FIRST_SET,
+    ):
+        if kind in transition_set:
+            return kind
+    return TransitionKind.FIRST_SET
 
 
 def _run_foreground(command: CommandPlan, runner: CommandRunner) -> None:

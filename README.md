@@ -361,6 +361,10 @@ timeout_seconds = 2.0
 ```
 
 Supported transition placeholders are `{monitor}`, `{from_file}`, `{to_file}`, `{from_backend}`, `{to_backend}`, `{transition}`, and `{stage}`.
+QuickShell overlay commands run at both the `before` and `after` stages. See
+`examples/quickshell-wallmux-fade/` for a runnable layer-shell fade overlay.
+The `quickshell_transitions` list controls which transition kinds use the
+overlay; image-to-image is disabled by default so native image transitions remain visible.
 
 Wallmux also ships with basic transition orchestration enabled by default:
 

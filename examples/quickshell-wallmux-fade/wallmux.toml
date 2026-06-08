@@ -1,0 +1,12 @@
+[transitions.effects]
+quickshell_overlay = true
+quickshell_command = "~/.config/quickshell/wallmux-fade/wallmux-fade.sh {stage} {monitor}"
+quickshell_transitions = ["image_to_video", "video_to_image", "video_to_video"]
+timeout_seconds = 2.0
+
+# The QuickShell overlay hides the backend handoff, so the basic delay can be short.
+[transitions.basic]
+enabled = true
+set_image_before_stopping_video = true
+video_to_image_settle_seconds = 0.1
+video_start_settle_seconds = 0.8

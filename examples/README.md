@@ -18,6 +18,9 @@ These are portable across most Wallmux setups:
   Shows backend defaults and fallback chains for `awww`, `swww`, `hyprpaper`, and `mpvpaper`.
 - `cache-video-optimization.md`
   Shows cache maintenance and video optimization commands from V2.6/V2.7.
+- `quickshell-wallmux-fade/`
+  Provides a runnable QuickShell layer-shell fade overlay, IPC controller, Wallmux
+  settings, and setup guide for smoother cross-backend transitions.
 
 ## Adapt-To-Your-System Examples
 
